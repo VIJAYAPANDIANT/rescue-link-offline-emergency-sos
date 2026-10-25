@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "RescueLink",
+    "slug": "rescuelink-offline-sos",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F8FAFC"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rescuelink.emergency.sos"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F8FAFC"
+      },
+      "package": "com.rescuelink.emergency.sos"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

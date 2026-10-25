@@ -1,0 +1,27 @@
+{
+  "name": "rescue-link-server",
+  "version": "1.0.0",
+  "description": "Backend API server for RescueLink - Offline Bluetooth Emergency SOS System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "emergency-sos",
+    "rescuelink",
+    "bluetooth",
+    "offline-first",
+    "express"
+  ],
+  "author": "RescueLink Team",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
