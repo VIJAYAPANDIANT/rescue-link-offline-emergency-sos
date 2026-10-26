@@ -1,30 +1,25 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, SafeAreaView } from 'react-native';
+import { AuthProvider, useAuth } from '../context/AuthContext';
 import { HomeScreen } from '../screens/HomeScreen';
 import { SendSOSScreen } from '../screens/SendSOSScreen';
 import { NearbyDevicesScreen } from '../screens/NearbyDevicesScreen';
 import { EmergencyHistoryScreen } from '../screens/EmergencyHistoryScreen';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
+import { LoginScreen } from '../screens/LoginScreen';
+import { RegisterScreen } from '../screens/RegisterScreen';
+import { ProfileScreen } from '../screens/ProfileScreen';
+import { colors, spacing, shadows } from '../utils/theme';
 
 /**
- * AppNavigator
- *
- * Implements seamless, crash-resilient navigation between:
- * - Home (Emergency Dashboard)
- * - Send SOS (Incident reporting form)
- * - Nearby Devices (BLE mesh status)
- * - Emergency History (Local offline audit logs)
- *
- * Provides a React Navigation compatible contract:
- * `navigation.navigate(screenName, params)` and `navigation.goBack()`
- * plus an accessible bottom navigation bar for quick emergency access.
+ * Navigation Content Controller
  */
-export const AppNavigator = () => {
+const NavigatorContent = () => {
+  const { isAuthenticated } = useAuth();
   const [currentScreen, setCurrentScreen] = useState('Home');
   const [history, setHistory] = useState(['Home']);
   const [routeParams, setRouteParams] = useState({});
 
-  // Global in-memory demonstration drafts list for Step 1
+  // Global in-memory demonstration drafts list
   const [drafts, setDrafts] = useState([]);
 
   const handleDraftCreated = (newDraft) => {
@@ -58,6 +53,12 @@ export const AppNavigator = () => {
   // Render current screen component
   const renderScreen = () => {
     switch (currentScreen) {
+      case 'Login':
+        return <LoginScreen navigation={navigation} route={{ params: routeParams }} />;
+      case 'Register':
+        return <RegisterScreen navigation={navigation} route={{ params: routeParams }} />;
+      case 'Profile':
+        return <ProfileScreen navigation={navigation} route={{ params: routeParams }} />;
       case 'SendSOS':
         return (
           <SendSOSScreen
@@ -103,6 +104,11 @@ export const AppNavigator = () => {
     { key: 'SendSOS', label: 'Send SOS', icon: '📝' },
     { key: 'NearbyDevices', label: 'Nearby', icon: '📡' },
     { key: 'EmergencyHistory', label: 'History', icon: '📋', badge: drafts.length },
+    {
+      key: 'Profile',
+      label: isAuthenticated ? 'Profile' : 'Sign In',
+      icon: isAuthenticated ? '🛡️' : '👤',
+    },
   ];
 
   return (
@@ -113,7 +119,9 @@ export const AppNavigator = () => {
       {/* Accessible Bottom Emergency Navigation Bar */}
       <View style={[styles.bottomBar, shadows.cardElevated]}>
         {navTabs.map((tab) => {
-          const isActive = currentScreen === tab.key;
+          const isActive =
+            currentScreen === tab.key ||
+            (tab.key === 'Profile' && (currentScreen === 'Login' || currentScreen === 'Register'));
           const isSOS = tab.key === 'SendSOS';
 
           return (
@@ -143,6 +151,7 @@ export const AppNavigator = () => {
                   isActive && styles.tabLabelActive,
                   isSOS && styles.sosTabLabel,
                 ]}
+                numberOfLines={1}
               >
                 {tab.label}
               </Text>
@@ -151,6 +160,17 @@ export const AppNavigator = () => {
         })}
       </View>
     </SafeAreaView>
+  );
+};
+
+/**
+ * AppNavigator Root (Wrapped with AuthProvider)
+ */
+export const AppNavigator = () => {
+  return (
+    <AuthProvider>
+      <NavigatorContent />
+    </AuthProvider>
   );
 };
 
@@ -168,7 +188,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardBackground,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
     alignItems: 'center',
     justifyContent: 'space-around',
   },
@@ -188,7 +208,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   tabLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     color: colors.textSecondary,
   },

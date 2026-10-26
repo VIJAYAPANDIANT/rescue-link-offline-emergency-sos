@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   Platform,
 } from 'react-native';
+import { useAuth } from '../context/AuthContext';
 import { SOSButton } from '../components/SOSButton';
 import { StatusCard } from '../components/StatusCard';
 import { apiClient } from '../services/api/apiClient';
@@ -18,12 +19,14 @@ import { APP_CONFIG, SAFETY_DISCLAIMER } from '../utils/constants';
  * HomeScreen / Emergency Dashboard
  *
  * Core emergency screen presenting:
+ * - Responder Identity / JWT authentication status
  * - Immediate red SOS action trigger
- * - Real-time Bluetooth, Connectivity, and GPS indicators
- * - Quick action portals to History and Nearby Devices
+ * - Real-time Bluetooth, Connectivity, GPS, and Server indicators
+ * - Quick action portals to History, Nearby Devices, and Account
  * - High-visibility emergency disclaimer
  */
 export const HomeScreen = ({ navigation }) => {
+  const { user, isAuthenticated } = useAuth();
   const [serverStatus, setServerStatus] = useState('Checking...');
   const [isServerHealthy, setIsServerHealthy] = useState(false);
 
@@ -56,6 +59,38 @@ export const HomeScreen = ({ navigation }) => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Responder Session Banner */}
+        <View style={styles.topBarRow}>
+          {isAuthenticated && user ? (
+            <TouchableOpacity
+              style={styles.responderPill}
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate('Profile')}
+            >
+              <View style={styles.responderDot} />
+              <Text style={styles.responderText} numberOfLines={1}>
+                {user.name} (JWT Active)
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.guestPill}
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate('Login')}
+            >
+              <Text style={styles.guestText}>👤 Guest Mode · Tap to Log In</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={styles.profileIconBtn}
+            onPress={() => navigation.navigate('Profile')}
+            accessibilityLabel="Account Profile"
+          >
+            <Text style={styles.profileIconText}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Header Branding */}
         <View style={styles.header}>
           <View style={styles.brandRow}>
@@ -89,8 +124,20 @@ export const HomeScreen = ({ navigation }) => {
         {/* System Connectivity & Sensor Status */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>SYSTEM STATUS</Text>
-          <Text style={styles.sectionCaption}>Offline sensors and radios</Text>
+          <Text style={styles.sectionCaption}>Offline sensors, radios, & session</Text>
         </View>
+
+        <StatusCard
+          title="Responder Session"
+          value={isAuthenticated ? 'JWT Authenticated' : 'Guest Mode'}
+          icon="🛡️"
+          variant={isAuthenticated ? 'success' : 'warning'}
+          subtitle={
+            isAuthenticated
+              ? `Signed in as ${user.name} (${user.email})`
+              : 'Anonymous responder. Cloud synchronization requires signing in.'
+          }
+        />
 
         <StatusCard
           title="Bluetooth Radio"
@@ -170,7 +217,7 @@ export const HomeScreen = ({ navigation }) => {
         {/* Footer info */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>
-            RescueLink Prototype v1.0.0 · Step 1 Foundation
+            RescueLink Prototype v1.0.0 · Step 2 Authentication & Offline SOS
           </Text>
         </View>
       </ScrollView>
@@ -187,6 +234,61 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
     paddingBottom: spacing.xxxl,
+  },
+  topBarRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  responderPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successLight,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.round,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    maxWidth: '80%',
+  },
+  responderDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.success,
+    marginRight: 6,
+  },
+  responderText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.successDark,
+  },
+  guestPill: {
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.round,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  guestText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  profileIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileIconText: {
+    fontSize: 16,
   },
   header: {
     alignItems: 'center',

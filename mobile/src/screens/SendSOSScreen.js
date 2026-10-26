@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { useAuth } from '../context/AuthContext';
 import { EmergencyTypeSelector } from '../components/EmergencyTypeSelector';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
@@ -30,11 +31,12 @@ import { formatCoordinates, generateDraftId } from '../utils/helpers';
  */
 export const SendSOSScreen = ({ navigation, route }) => {
   const onDraftCreated = route.params?.onDraftCreated;
+  const { user } = useAuth();
 
   // Form State
   const [selectedType, setSelectedType] = useState('medical');
   const [details, setDetails] = useState('');
-  const [contactName, setContactName] = useState('');
+  const [contactName, setContactName] = useState(user?.name || '');
   const [contactPhone, setContactPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdDraft, setCreatedDraft] = useState(null);

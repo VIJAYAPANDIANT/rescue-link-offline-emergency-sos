@@ -236,11 +236,12 @@ c:\Offline Emergency SOS/
   - React Native Expo application structure
   - Reusable emergency design system and components
   - Complete 4-screen mobile workflow
-- [ ] **Step 2: User Authentication & Cloud Sync Backend**
-  - MongoDB connection & Mongoose schemas
-  - User registration & login with bcrypt
+- [x] **Step 2: User Authentication & JWT-Protected APIs** (Completed)
+  - Atomic JSON user storage (`server/data/users.json`) with race-condition mutex
+  - Password hashing with bcrypt (10 salt rounds)
+  - Registration (`POST /api/auth/register`), Login (`POST /api/auth/login`), and Profile (`GET /api/auth/me`)
   - JWT token generation & verification middleware
-  - Protected API routes
+  - Mobile authentication context (`AuthContext.js`), Login, Register, and Profile screens
 - [ ] **Step 3: Bluetooth Low Energy (BLE) Mesh & Local SQLite**
   - Native BLE peripheral advertising & central scanning
   - Offline-first SQLite database schema & migrations
