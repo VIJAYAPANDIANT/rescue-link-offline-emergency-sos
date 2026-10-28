@@ -5,5 +5,12 @@
     "email": "alex.rivera@rescuelink.org",
     "passwordHash": "$2b$10$.CxpYstssBw3p8L7E67y8OI1AcZ/g/aO97tZVqiJ2BBglOBMdB6cK",
     "createdAt": "2026-10-26T18:32:30.615Z"
+  },
+  {
+    "id": "5b1f0557-63fd-404f-89f7-60935f9eb1d1",
+    "name": "Sarah Connor",
+    "email": "sarah.connor@rescuelink.org",
+    "passwordHash": "$2b$10$PYLyzLEIQL0Eh4A.g3PGZelN5oGp/A75nIiOXjGY3y2l4CIzUpA4e",
+    "createdAt": "2026-10-28T16:41:29.369Z"
   }
 ]

@@ -205,6 +205,157 @@ class ApiClient {
     this.clearToken();
     return { success: true };
   }
+
+  /**
+   * Create an emergency alert
+   * @param {object} alertPayload
+   * @param {string} alertPayload.emergencyType
+   * @param {string} [alertPayload.details]
+   * @param {string} [alertPayload.contactDetails]
+   * @param {object|null} [alertPayload.location]
+   */
+  async createAlert(alertPayload) {
+    try {
+      const response = await fetch(`${this.baseUrl}/alerts`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(alertPayload),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to create emergency alert.',
+          code: data.error?.code,
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        data: data.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error while creating alert.',
+      };
+    }
+  }
+
+  /**
+   * Retrieve alerts belonging to the authenticated user
+   * @param {object} [filter]
+   * @param {string} [filter.status]
+   */
+  async getAlerts(filter = {}) {
+    try {
+      const queryParams = new URLSearchParams();
+      if (filter.status) queryParams.append('status', filter.status);
+      const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+      const response = await fetch(`${this.baseUrl}/alerts${queryStr}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to retrieve alerts.',
+          code: data.error?.code,
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        data: data.data || [],
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error while retrieving alerts.',
+      };
+    }
+  }
+
+  /**
+   * Retrieve a specific alert by ID
+   * @param {string} alertId
+   */
+  async getAlertById(alertId) {
+    try {
+      const response = await fetch(`${this.baseUrl}/alerts/${alertId}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || 'Failed to retrieve alert.',
+          code: data.error?.code,
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error while fetching alert.',
+      };
+    }
+  }
+
+  /**
+   * Update alert status (e.g. mark Resolved)
+   * @param {string} alertId
+   * @param {string} status
+   */
+  async updateAlertStatus(alertId, status) {
+    try {
+      const response = await fetch(`${this.baseUrl}/alerts/${alertId}/status`, {
+        method: 'PATCH',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ status }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to update alert status.',
+          code: data.error?.code,
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        data: data.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error while updating alert status.',
+      };
+    }
+  }
 }
 
 export const apiClient = new ApiClient();

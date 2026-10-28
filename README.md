@@ -242,11 +242,17 @@ c:\Offline Emergency SOS/
   - Registration (`POST /api/auth/register`), Login (`POST /api/auth/login`), and Profile (`GET /api/auth/me`)
   - JWT token generation & verification middleware
   - Mobile authentication context (`AuthContext.js`), Login, Register, and Profile screens
-- [ ] **Step 3: Bluetooth Low Energy (BLE) Mesh & Local SQLite**
+- [x] **Step 3: SOS Alert Creation & Emergency Alert Management** (Completed)
+  - Concurrency-safe atomic JSON alert store (`server/data/alerts.json`) with serialization lock
+  - Robust backend validation: allowed types, coordinates (-90 to 90, -180 to 180), length bounds
+  - JWT ownership security: cross-user isolation, automatic sender ID/name derivation
+  - REST endpoints: `POST /api/alerts`, `GET /api/alerts`, `GET /api/alerts/:id`, `PATCH /api/alerts/:id/status`
+  - React Native Send SOS form connected with authenticated submission, optional location acquisition, and review modal
+  - Emergency History connected to live backend with pull-to-refresh and "Mark as Resolved" capability
+- [ ] **Step 4: Bluetooth Low Energy (BLE) Mesh & Local SQLite Database**
   - Native BLE peripheral advertising & central scanning
-  - Offline-first SQLite database schema & migrations
-  - Local persistence of emergency dispatches
-- [ ] **Step 4: Multi-hop Relay & Emergency Responder Dashboard**
-  - Multi-hop packet hop count & relay logic
-  - Web-based responder visualization dashboard
-  - SMS gateway integration for cloud egress
+  - Multi-hop packet relaying and receiver acknowledgment
+  - Offline-first SQLite database schema & opportunistic sync
+- [ ] **Step 5: Cloud Synchronization & First Responder Dashboard**
+  - MongoDB migration & cloud ingestion
+  - Real-time incident mapping & first responder dispatch interface

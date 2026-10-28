@@ -144,23 +144,27 @@ export const HomeScreen = ({ navigation }) => {
           value="BLE Standby"
           icon="📡"
           variant="info"
-          subtitle="Ready for peer-to-peer mesh broadcasting (Step 3)"
+          subtitle="Idle · No active BLE peer connection exists"
         />
 
         <StatusCard
-          title="Internet Connectivity"
-          value="Offline Mode"
-          icon="📴"
-          variant="warning"
-          subtitle="No cellular / Wi-Fi detected. Peer mesh will relay alerts."
+          title="Network Connectivity"
+          value={isServerHealthy ? 'Backend Online' : 'Offline / Local Mode'}
+          icon="🌐"
+          variant={isServerHealthy ? 'success' : 'warning'}
+          subtitle={
+            isServerHealthy
+              ? 'Connected to RescueLink API (http://localhost:5000)'
+              : 'Server offline or unreachable'
+          }
         />
 
         <StatusCard
-          title="GPS Position"
-          value="12.9716° N, 77.5946° E"
+          title="GPS Location Sensor"
+          value="Available on Request"
           icon="📍"
           variant="info"
-          subtitle="Accuracy: ±8.5m · Demo coordinates locked"
+          subtitle="Coordinates are optional and attached only with user consent"
         />
 
         <StatusCard

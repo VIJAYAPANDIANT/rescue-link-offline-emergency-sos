@@ -9,8 +9,12 @@ import {
   SafeAreaView,
   KeyboardAvoidingView,
   Platform,
+  Switch,
+  TouchableOpacity,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { apiClient } from '../services/api/apiClient';
+import { locationService } from '../services/location/locationService';
 import { EmergencyTypeSelector } from '../components/EmergencyTypeSelector';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
@@ -20,18 +24,18 @@ import { formatCoordinates, generateDraftId } from '../utils/helpers';
 /**
  * SendSOSScreen
  *
- * Emergency SOS configuration and dispatch flow:
- * 1. Emergency Type Selection (Medical, Accident, Safety, Fire, Other)
- * 2. Location Indicator with coordinates & accuracy
+ * Emergency SOS configuration and backend submission:
+ * 1. Emergency Type Selection (Medical Emergency, Accident, Personal Safety, Fire, Other)
+ * 2. Optional Location Acquisition & Indicator (Attached / Unavailable / Omitted)
  * 3. Additional Details input
  * 4. Optional Contact Details input
- * 5. Review Step & Pre-dispatch Summary
- * 6. Native Confirmation Alert
- * 7. Local Draft Creation (Safety Rule: Never claims real emergency dispatch in Step 1)
+ * 5. Pre-dispatch Review & Confirmation Dialog
+ * 6. Authenticated Submission to POST /api/alerts
+ * 7. Success & Error States with clear safety disclaimers
  */
 export const SendSOSScreen = ({ navigation, route }) => {
   const onDraftCreated = route.params?.onDraftCreated;
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
 
   // Form State
   const [selectedType, setSelectedType] = useState('medical');
@@ -39,70 +43,113 @@ export const SendSOSScreen = ({ navigation, route }) => {
   const [contactName, setContactName] = useState(user?.name || '');
   const [contactPhone, setContactPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [createdDraft, setCreatedDraft] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [createdAlert, setCreatedAlert] = useState(null);
 
-  // Simulated GPS Coordinates (Safe prototype demonstration)
-  const currentLocation = {
-    latitude: 12.9716,
-    longitude: 77.5946,
-    accuracy: 8.5,
+  // Location State
+  const [includeLocation, setIncludeLocation] = useState(false);
+  const [locationStatus, setLocationStatus] = useState('Location omitted by user');
+  const [acquiredCoords, setAcquiredCoords] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
+
+  // Update contactName when user logs in
+  useEffect(() => {
+    if (user?.name && !contactName) {
+      setContactName(user.name);
+    }
+  }, [user]);
+
+  // Handle location toggle
+  const handleToggleLocation = async (enabled) => {
+    setIncludeLocation(enabled);
+    if (!enabled) {
+      setLocationStatus('Location omitted by user');
+      setAcquiredCoords(null);
+      return;
+    }
+
+    setIsLocating(true);
+    setLocationStatus('Acquiring GPS location...');
+
+    const locResult = await locationService.acquireLocation();
+    setIsLocating(false);
+
+    if (locResult.success && locResult.coords) {
+      setAcquiredCoords(locResult.coords);
+      setLocationStatus('Location attached');
+    } else {
+      setAcquiredCoords(null);
+      setLocationStatus(locResult.status || 'Location unavailable');
+    }
   };
 
   const selectedTypeConfig =
     EMERGENCY_TYPES.find((t) => t.id === selectedType) || EMERGENCY_TYPES[0];
 
-  // Trigger Confirmation Dialog
+  // Trigger Confirmation Dialog before sending
   const handleReviewAndSubmit = () => {
+    setErrorMessage(null);
+
+    if (!isAuthenticated) {
+      Alert.alert(
+        'Authentication Required',
+        'You are currently in Guest Mode. Please sign in with your responder account to submit emergency alerts to the backend.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Sign In', onPress: () => navigation.navigate('Login') },
+        ]
+      );
+      return;
+    }
+
     Alert.alert(
-      '⚠️ Confirm SOS Draft Creation',
-      `You are creating a ${selectedTypeConfig.label} draft alert.\n\nNOTE: In this Step 1 prototype, this will be saved as a local draft only. No live broadcast or call to 911/112 will be performed.\n\nProceed to save draft?`,
+      '⚠️ Confirm Emergency SOS Submission',
+      `You are creating an emergency alert:\n\nType: ${selectedTypeConfig.label}\nLocation: ${
+        acquiredCoords ? `${acquiredCoords.latitude}°, ${acquiredCoords.longitude}°` : 'None (Omitted)'
+      }\n\nNotice: This creates a permanent alert record on the RescueLink backend. Direct Bluetooth mesh broadcast and 911 dispatch await subsequent modules.\n\nProceed to submit?`,
       [
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Create Local Draft',
+          text: 'Submit Emergency Alert',
           style: 'destructive',
-          onPress: executeLocalDraftCreation,
+          onPress: executeAlertSubmission,
         },
       ]
     );
   };
 
-  // Execute Local Demonstration Draft Creation
-  const executeLocalDraftCreation = () => {
+  // Submit Alert to Backend API
+  const executeAlertSubmission = async () => {
+    if (isSubmitting) return; // Prevent duplicate submissions
     setIsSubmitting(true);
+    setErrorMessage(null);
 
-    setTimeout(() => {
-      const draftRecord = {
-        id: generateDraftId(),
-        emergencyType: selectedTypeConfig.id,
-        emergencyLabel: selectedTypeConfig.label,
-        symbol: selectedTypeConfig.symbol,
-        color: selectedTypeConfig.color,
-        details: details.trim() || 'No additional details provided.',
-        contactName: contactName.trim() || 'Not specified',
-        contactPhone: contactPhone.trim() || 'Not specified',
-        location: {
-          latitude: currentLocation.latitude,
-          longitude: currentLocation.longitude,
-          accuracy: currentLocation.accuracy,
-        },
-        status: 'LOCAL DEMO DRAFT',
-        isBroadcasted: false,
-        isDemo: true,
-        createdAt: new Date().toISOString(),
-      };
+    const contactStr = [contactName.trim(), contactPhone.trim()]
+      .filter(Boolean)
+      .join(' · ');
 
-      // Notify parent/global handler if provided
+    const payload = {
+      emergencyType: selectedTypeConfig.label,
+      details: details.trim() || undefined,
+      contactDetails: contactStr || undefined,
+      location: includeLocation && acquiredCoords ? acquiredCoords : null,
+    };
+
+    const response = await apiClient.createAlert(payload);
+    setIsSubmitting(false);
+
+    if (response.success && response.data) {
+      setCreatedAlert(response.data);
+
+      // Also notify parent if handler provided
       if (typeof onDraftCreated === 'function') {
-        onDraftCreated(draftRecord);
+        onDraftCreated(response.data);
       }
-
-      setCreatedDraft(draftRecord);
-      setIsSubmitting(false);
-    }, 600);
+    } else {
+      setErrorMessage(
+        response.error || 'Failed to submit emergency alert. Please verify your connection.'
+      );
+    }
   };
 
   return (
@@ -119,59 +166,103 @@ export const SendSOSScreen = ({ navigation, route }) => {
           <View style={styles.header}>
             <Text style={styles.screenTitle}>Send Emergency SOS</Text>
             <Text style={styles.screenSubtitle}>
-              Prepare offline emergency report payload
+              Broadcast emergency distress beacon to backend database
             </Text>
           </View>
 
-          {/* Success Result Card (If Draft Created) */}
-          {createdDraft ? (
+          {/* Guest Mode Warning Banner if not logged in */}
+          {!isAuthenticated ? (
+            <View style={styles.guestBanner}>
+              <Text style={styles.guestIcon}>⚠️</Text>
+              <View style={styles.guestTextContainer}>
+                <Text style={styles.guestTitle}>Guest Mode Active</Text>
+                <Text style={styles.guestMessage}>
+                  Please sign in to record alerts in the central backend.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.guestLoginBtn}
+                onPress={() => navigation.navigate('Login')}
+              >
+                <Text style={styles.guestLoginBtnText}>Sign In</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {/* Error Banner */}
+          {errorMessage ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorIcon}>❌</Text>
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          ) : null}
+
+          {/* Success Result Card (After Backend 201 Response) */}
+          {createdAlert ? (
             <View style={[styles.successContainer, shadows.cardElevated]}>
               <View style={styles.successHeader}>
-                <Text style={styles.successBadge}>LOCAL DEMONSTRATION STATE</Text>
-                <Text style={styles.successTitle}>Draft Created Successfully</Text>
+                <Text style={styles.successBadge}>BACKEND RECORD CREATED (HTTP 201)</Text>
+                <Text style={styles.successTitle}>Alert Submitted Successfully</Text>
               </View>
 
               <View style={styles.alertNoticeBox}>
                 <Text style={styles.alertNoticeText}>
-                  🛡️ This emergency draft has been saved to local memory only. Real BLE mesh
-                  broadcasting and cloud gateway relaying are awaiting Step 3. No emergency
-                  services or responders have been notified.
+                  🛡️ Confirmed: Your emergency alert has been securely stored in the RescueLink
+                  backend database. Real device-to-device BLE mesh relaying and official dispatch
+                  (911/112) await subsequent modules.
                 </Text>
               </View>
 
               <View style={styles.draftDetailsCard}>
-                <Text style={styles.draftIdText}>ID: {createdDraft.id}</Text>
+                <Text style={styles.draftIdText}>ALERT ID: {createdAlert.id}</Text>
+                <Text style={styles.draftRow}>
+                  <Text style={styles.draftLabel}>Status: </Text>
+                  <Text style={styles.statusPending}>{createdAlert.status}</Text>
+                </Text>
                 <Text style={styles.draftRow}>
                   <Text style={styles.draftLabel}>Type: </Text>
-                  {createdDraft.symbol} {createdDraft.emergencyLabel}
+                  {createdAlert.emergencyType}
+                </Text>
+                <Text style={styles.draftRow}>
+                  <Text style={styles.draftLabel}>Sender: </Text>
+                  {createdAlert.senderName}
                 </Text>
                 <Text style={styles.draftRow}>
                   <Text style={styles.draftLabel}>Location: </Text>
-                  {formatCoordinates(
-                    createdDraft.location.latitude,
-                    createdDraft.location.longitude,
-                    createdDraft.location.accuracy
-                  )}
+                  {createdAlert.location
+                    ? `${createdAlert.location.latitude.toFixed(4)}°, ${createdAlert.location.longitude.toFixed(4)}°`
+                    : 'None (Omitted)'}
                 </Text>
-                <Text style={styles.draftRow}>
-                  <Text style={styles.draftLabel}>Details: </Text>
-                  {createdDraft.details}
-                </Text>
+                {createdAlert.details ? (
+                  <Text style={styles.draftRow}>
+                    <Text style={styles.draftLabel}>Details: </Text>
+                    {createdAlert.details}
+                  </Text>
+                ) : null}
               </View>
 
               <View style={styles.successActions}>
                 <PrimaryButton
                   title="View in Emergency History"
                   onPress={() => {
-                    setCreatedDraft(null);
+                    setCreatedAlert(null);
                     navigation.navigate('EmergencyHistory');
                   }}
                   variant="primary"
+                  icon="📋"
+                />
+                <PrimaryButton
+                  title="Create Another Alert"
+                  onPress={() => {
+                    setCreatedAlert(null);
+                    setDetails('');
+                  }}
+                  variant="secondary"
                 />
                 <PrimaryButton
                   title="Back to Dashboard"
                   onPress={() => {
-                    setCreatedDraft(null);
+                    setCreatedAlert(null);
                     navigation.navigate('Home');
                   }}
                   variant="outline"
@@ -180,26 +271,39 @@ export const SendSOSScreen = ({ navigation, route }) => {
             </View>
           ) : (
             <>
-              {/* Location Indicator Card */}
+              {/* Location Selector Card */}
               <View style={[styles.locationCard, shadows.card]}>
-                <View style={styles.locationHeader}>
-                  <Text style={styles.locationIcon}>📍</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.locationTitle}>Attached GPS Coordinates</Text>
-                    <Text style={styles.locationCoords}>
-                      {formatCoordinates(
-                        currentLocation.latitude,
-                        currentLocation.longitude,
-                        currentLocation.accuracy
-                      )}
+                <View style={styles.locationHeaderRow}>
+                  <View style={styles.locationHeaderLeft}>
+                    <Text style={styles.locationIcon}>📍</Text>
+                    <View>
+                      <Text style={styles.locationTitle}>GPS Location</Text>
+                      <Text style={styles.locationStatusText}>{locationStatus}</Text>
+                    </View>
+                  </View>
+                  <Switch
+                    value={includeLocation}
+                    onValueChange={handleToggleLocation}
+                    trackColor={{ false: colors.borderDark, true: colors.info }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {includeLocation && acquiredCoords ? (
+                  <View style={styles.coordsBox}>
+                    <Text style={styles.coordsText}>
+                      Coordinates: {acquiredCoords.latitude.toFixed(4)}° N,{' '}
+                      {acquiredCoords.longitude.toFixed(4)}° E
                     </Text>
                   </View>
-                  <View style={styles.gpsActiveBadge}>
-                    <Text style={styles.gpsActiveText}>GPS LOCKED</Text>
-                  </View>
-                </View>
-                <Text style={styles.locationNote}>
-                  Location will be embedded into the local broadcast beacon.
+                ) : null}
+
+                {includeLocation && isLocating ? (
+                  <Text style={styles.locatingText}>📡 Contacting GPS sensors...</Text>
+                ) : null}
+
+                <Text style={styles.locationHelper}>
+                  Location is completely optional. You can safely transmit emergency dispatches without coordinates.
                 </Text>
               </View>
 
@@ -212,17 +316,18 @@ export const SendSOSScreen = ({ navigation, route }) => {
               {/* 2. Additional Details Input */}
               <View style={styles.inputSection}>
                 <Text style={styles.inputLabel}>
-                  INCIDENT DETAILS (OPTIONAL BUT RECOMMENDED)
+                  INCIDENT DETAILS (OPTIONAL)
                 </Text>
                 <TextInput
                   style={styles.textArea}
-                  placeholder="Describe your situation (e.g. 2 people trapped, need oxygen, severe bleeding)..."
+                  placeholder="Describe your situation (e.g. 2 people trapped, smoke spreading, severe bleeding)..."
                   placeholderTextColor={colors.textMuted}
                   multiline
                   numberOfLines={4}
                   value={details}
                   onChangeText={setDetails}
                   textAlignVertical="top"
+                  maxLength={1000}
                 />
               </View>
 
@@ -235,6 +340,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
                   placeholderTextColor={colors.textMuted}
                   value={contactName}
                   onChangeText={setContactName}
+                  maxLength={100}
                 />
                 <TextInput
                   style={[styles.textInput, { marginTop: spacing.sm }]}
@@ -243,6 +349,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
                   keyboardType="phone-pad"
                   value={contactPhone}
                   onChangeText={setContactPhone}
+                  maxLength={50}
                 />
               </View>
 
@@ -256,25 +363,29 @@ export const SendSOSScreen = ({ navigation, route }) => {
                   </Text>
                 </View>
                 <View style={styles.reviewItem}>
-                  <Text style={styles.reviewLabel}>GPS Lock:</Text>
+                  <Text style={styles.reviewLabel}>Location:</Text>
                   <Text style={styles.reviewValue}>
-                    {currentLocation.latitude.toFixed(4)}° N,{' '}
-                    {currentLocation.longitude.toFixed(4)}° E
+                    {acquiredCoords
+                      ? `${acquiredCoords.latitude.toFixed(4)}°, ${acquiredCoords.longitude.toFixed(4)}°`
+                      : 'None (Omitted)'}
                   </Text>
                 </View>
                 <View style={styles.reviewItem}>
-                  <Text style={styles.reviewLabel}>Dispatch Mode:</Text>
-                  <Text style={styles.reviewValue}>Local Demonstration Draft</Text>
+                  <Text style={styles.reviewLabel}>Sender:</Text>
+                  <Text style={styles.reviewValue}>
+                    {isAuthenticated ? user.name : 'Guest User'}
+                  </Text>
                 </View>
               </View>
 
               {/* Action Buttons */}
               <View style={styles.actionContainer}>
                 <PrimaryButton
-                  title="Create SOS Draft (Demonstration)"
+                  title={isSubmitting ? 'Submitting SOS...' : 'Send Emergency SOS'}
                   onPress={handleReviewAndSubmit}
                   variant="danger"
                   loading={isSubmitting}
+                  disabled={isSubmitting}
                   icon="🚨"
                 />
                 <PrimaryButton
@@ -315,51 +426,118 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
+  guestBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.warningLight,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+  },
+  guestIcon: {
+    fontSize: 20,
+    marginRight: spacing.sm,
+  },
+  guestTextContainer: {
+    flex: 1,
+  },
+  guestTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.warningDark,
+  },
+  guestMessage: {
+    fontSize: 11,
+    color: colors.warningDark,
+  },
+  guestLoginBtn: {
+    backgroundColor: colors.warningDark,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+  },
+  guestLoginBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryLight,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+  },
+  errorIcon: {
+    fontSize: 18,
+    marginRight: spacing.sm,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.primaryDark,
+    lineHeight: 16,
+  },
   locationCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.lg,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.infoBorder,
+    borderColor: colors.border,
     marginBottom: spacing.sm,
   },
-  locationHeader: {
+  locationHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  locationHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   locationIcon: {
-    fontSize: 24,
+    fontSize: 22,
     marginRight: spacing.sm,
   },
   locationTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  locationCoords: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.info,
-    marginTop: 2,
+    color: colors.textPrimary,
   },
-  gpsActiveBadge: {
+  locationStatusText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  coordsBox: {
     backgroundColor: colors.infoLight,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: borderRadius.round,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginTop: spacing.sm,
     borderWidth: 1,
     borderColor: colors.infoBorder,
   },
-  gpsActiveText: {
-    fontSize: 10,
-    fontWeight: '800',
+  coordsText: {
+    fontSize: 12,
+    fontWeight: '700',
     color: colors.infoDark,
   },
-  locationNote: {
+  locatingText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: colors.info,
+    marginTop: spacing.xs,
+  },
+  locationHelper: {
     fontSize: 11,
     color: colors.textMuted,
-    marginTop: spacing.xs,
+    marginTop: spacing.xs + 2,
+    lineHeight: 15,
   },
   inputSection: {
     marginVertical: spacing.sm,
@@ -438,8 +616,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   successBadge: {
-    backgroundColor: colors.warningLight,
-    color: colors.warningDark,
+    backgroundColor: colors.successLight,
+    color: colors.successDark,
     fontSize: 10,
     fontWeight: '800',
     paddingHorizontal: spacing.md,
@@ -448,7 +626,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: spacing.xs,
     borderWidth: 1,
-    borderColor: colors.warningBorder,
+    borderColor: colors.successBorder,
   },
   successTitle: {
     fontSize: 20,
@@ -457,14 +635,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   alertNoticeBox: {
-    backgroundColor: colors.warningLight,
+    backgroundColor: colors.infoLight,
     padding: spacing.md,
     borderRadius: borderRadius.md,
     marginVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.infoBorder,
   },
   alertNoticeText: {
     fontSize: 12,
-    color: colors.warningDark,
+    color: colors.infoDark,
     lineHeight: 17,
   },
   draftDetailsCard: {
@@ -487,6 +667,10 @@ const styles = StyleSheet.create({
   draftLabel: {
     fontWeight: '700',
     color: colors.textSecondary,
+  },
+  statusPending: {
+    fontWeight: '800',
+    color: colors.warningDark,
   },
   successActions: {
     marginTop: spacing.md,

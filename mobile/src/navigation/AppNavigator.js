@@ -103,7 +103,7 @@ const NavigatorContent = () => {
     { key: 'Home', label: 'Dashboard', icon: '🚨' },
     { key: 'SendSOS', label: 'Send SOS', icon: '📝' },
     { key: 'NearbyDevices', label: 'Nearby', icon: '📡' },
-    { key: 'EmergencyHistory', label: 'History', icon: '📋', badge: drafts.length },
+    { key: 'EmergencyHistory', label: 'History', icon: '📋' },
     {
       key: 'Profile',
       label: isAuthenticated ? 'Profile' : 'Sign In',
