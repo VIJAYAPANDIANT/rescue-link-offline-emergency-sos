@@ -41,10 +41,14 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": false,
-          "modes": ["peripheral", "central"],
+          "modes": [
+            "peripheral",
+            "central"
+          ],
           "bluetoothAlwaysPermission": "RescueLink requires Bluetooth to discover and communicate with nearby emergency responders."
         }
-      ]
+      ],
+      "expo-sqlite"
     ]
   }
 }

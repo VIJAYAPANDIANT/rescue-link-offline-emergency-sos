@@ -17,6 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
 import { locationService } from '../services/location/locationService';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
+import { AlertRepository, ReceiptRepository, SyncQueueRepository } from '../database';
 import { EmergencyTypeSelector } from '../components/EmergencyTypeSelector';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
@@ -137,51 +138,146 @@ export const SendSOSScreen = ({ navigation, route }) => {
       location: includeLocation && acquiredCoords ? acquiredCoords : null,
     };
 
+    const localAlertId = generateDraftId();
+    const baseAlertRecord = {
+      alertId: localAlertId,
+      senderId: user?.id || null,
+      senderName: contactName.trim() || user?.name || 'Anonymous Responder',
+      emergencyType: payload.emergencyType,
+      details: payload.details || '',
+      contactDetails: payload.contactDetails || '',
+      latitude: payload.location ? payload.location.latitude : null,
+      longitude: payload.location ? payload.location.longitude : null,
+      source: 'local',
+      deliveryStatus: 'pending',
+      ackStatus: 'unacknowledged',
+      syncStatus: 'pending_sync',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 1. Immediately persist to SQLite database (Offline-first guarantee)
+    try {
+      await AlertRepository.saveOrUpdateAlert(baseAlertRecord);
+    } catch (dbErr) {
+      console.warn('[SendSOSScreen] SQLite initial save warning:', dbErr.message);
+    }
+
     if (isAuthenticated) {
-      // 1. Online / Authenticated Path
+      // 2. Online / Authenticated Path
       const response = await apiClient.createAlert(payload);
       setIsSubmitting(false);
 
       if (response.success && response.data) {
-        setCreatedAlert(response.data);
+        const serverAlert = response.data;
+        const syncedAlert = {
+          ...serverAlert,
+          alertId: serverAlert.id,
+          source: 'local',
+          syncStatus: 'synced',
+        };
+
+        // Update local SQLite record with confirmed server ID and synced status
+        try {
+          await AlertRepository.saveOrUpdateAlert(syncedAlert);
+        } catch (e) {
+          console.warn('[SendSOSScreen] SQLite sync update warning:', e.message);
+        }
+
+        setCreatedAlert(syncedAlert);
         if (typeof onDraftCreated === 'function') {
-          onDraftCreated(response.data);
+          onDraftCreated(syncedAlert);
         }
       } else {
-        // Backend unavailable or error -> Offer offline fallback
+        // Backend unavailable -> Enqueue operation in offline sync outbox
+        try {
+          await SyncQueueRepository.enqueue({
+            alertId: localAlertId,
+            operation: 'CREATE',
+            payload,
+          });
+        } catch (qErr) {
+          console.warn('[SendSOSScreen] Failed to enqueue sync item:', qErr.message);
+        }
+
+        const offlineAlert = {
+          ...baseAlertRecord,
+          id: localAlertId,
+          status: 'Offline (Queued for Sync)',
+          isOffline: true,
+        };
+
+        setCreatedAlert(offlineAlert);
+        if (typeof onDraftCreated === 'function') {
+          onDraftCreated(offlineAlert);
+        }
+
         Alert.alert(
-          'Server Unreachable',
-          'Unable to reach the RescueLink backend. Would you like to create an offline local alert and broadcast it over Bluetooth?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Create Offline Alert',
-              onPress: () => createOfflineAlert(payload),
-            },
-          ]
+          'Server Unreachable (Offline Mode)',
+          'Unable to reach the RescueLink backend. Your distress alert has been safely saved to local SQLite database and queued for synchronization. You can broadcast it now via Bluetooth.',
+          [{ text: 'OK' }]
         );
       }
     } else {
-      // 2. Guest / Offline Mode
+      // 3. Guest / Offline Mode -> Enqueue in offline outbox
       setIsSubmitting(false);
-      createOfflineAlert(payload);
+      try {
+        await SyncQueueRepository.enqueue({
+          alertId: localAlertId,
+          operation: 'CREATE',
+          payload,
+        });
+      } catch (qErr) {
+        console.warn('[SendSOSScreen] Failed to enqueue sync item:', qErr.message);
+      }
+
+      const guestAlert = {
+        ...baseAlertRecord,
+        id: localAlertId,
+        status: 'Offline (Local Only)',
+        isOffline: true,
+      };
+
+      setCreatedAlert(guestAlert);
+      if (typeof onDraftCreated === 'function') {
+        onDraftCreated(guestAlert);
+      }
     }
   };
 
-  // Create offline local alert
-  const createOfflineAlert = (payload) => {
+  // Create offline local alert helper
+  const createOfflineAlert = async (payload) => {
+    const localId = generateDraftId();
     const localAlert = {
-      id: generateDraftId(),
+      alertId: localId,
+      id: localId,
       emergencyType: payload.emergencyType,
       details: payload.details || '',
       contactDetails: payload.contactDetails || '',
+      latitude: payload.location?.latitude || null,
+      longitude: payload.location?.longitude || null,
       location: payload.location,
       senderName: contactName.trim() || 'Anonymous Responder',
       status: 'Offline (Local Only)',
+      source: 'local',
+      deliveryStatus: 'pending',
+      ackStatus: 'unacknowledged',
+      syncStatus: 'pending_sync',
       isOffline: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+
+    try {
+      await AlertRepository.saveOrUpdateAlert(localAlert);
+      await SyncQueueRepository.enqueue({
+        alertId: localId,
+        operation: 'CREATE',
+        payload,
+      });
+    } catch (e) {
+      console.warn('[SendSOSScreen] Local fallback save error:', e.message);
+    }
 
     setCreatedAlert(localAlert);
     if (typeof onDraftCreated === 'function') {
@@ -198,10 +294,24 @@ export const SendSOSScreen = ({ navigation, route }) => {
 
     const result = await bluetoothService.startAdvertisingSOS(
       createdAlert,
-      (ack) => {
+      async (ack) => {
         // Callback invoked when receiver sends ACK
         setBleAckInfo(ack);
         setBleStatusText('Receiver acknowledgment confirmed over BLE!');
+
+        // Record confirmed receipt in SQLite
+        try {
+          const targetAlertId = createdAlert.alertId || createdAlert.id;
+          await ReceiptRepository.recordReceipt({
+            alertId: targetAlertId,
+            receiptType: 'BLE_ACK_RECEIVED',
+            senderOrDeviceId: ack.receiverId,
+            metadata: ack,
+          });
+        } catch (dbErr) {
+          console.warn('[SendSOSScreen] SQLite receipt recording warning:', dbErr.message);
+        }
+
         Alert.alert(
           '🎉 Acknowledgment Received!',
           `Nearby receiver (${ack.receiverId}) has confirmed receipt of your distress alert over Bluetooth.`,

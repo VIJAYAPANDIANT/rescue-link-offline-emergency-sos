@@ -78,7 +78,12 @@ c:\Offline Emergency SOS/
 │       │   └── sync/
 │       │       └── syncService.js      # Opportunistic cloud sync blueprint
 │       ├── database/
-│       │   └── dbPlaceholder.js       # SQLite relational schema blueprint
+│       │   ├── database.js            # SQLite connection, PRAGMA WAL, and lifecycle
+│       │   ├── migrations.js          # Versioned schema migrations runner (v1 initial)
+│       │   ├── alertRepository.js     # SOS alert persistence, upsert, and queries
+│       │   ├── receiptRepository.js   # Message delivery & ACK receipts with atomic transactions
+│       │   ├── syncQueueRepository.js # Offline outbox queue for pending server operations
+│       │   └── index.js               # Central database export
 │       └── utils/
 │           ├── constants.js           # Emergency categories, status & disclaimers
 │           ├── theme.js               # Emergency color palette, spacing & typography
@@ -256,9 +261,16 @@ c:\Offline Emergency SOS/
   - Sender workflow in `SendSOSScreen.js`: online backend creation or offline local draft, deliberate BLE broadcast trigger, live GATT status, and ACK listener
   - Receiver workflow in `NearbyDevicesScreen.js`: discovery scan, real device list with RSSI metrics, GATT connection, offline alert validation, offline security disclaimer, and genuine BLE ACK transmission
   - Comprehensive unit test suite covering protocol validation, malformed payloads, schema checks, and payload bounds
-- [ ] **Step 5: Offline-First SQLite Database & Opportunistic Sync**
-  - Relational SQLite schema for local alerts, peer logs, and unsynced drafts
-  - Automatic synchronization when cloud/internet connectivity is restored
+- [x] **Step 5: SQLite Offline Storage & Reliable Alert Persistence** (Completed)
+  - Integrated `expo-sqlite` (~15.1.4) with WAL journal mode and foreign keys enabled
+  - Versioned migration runner (`schema_migrations`, v1 initial schema)
+  - Tables created: `alerts`, `message_receipts`, and `sync_queue` (offline outbox) with indexed lookups
+  - Multi-source alert persistence: User local drafts, incoming BLE distress messages, and server sync
+  - Duplicate prevention: Stable `alertId` upserting preserving confirmed acknowledgments and pending sync states
+  - Message receipts repository with atomic transactions updating alert `ackStatus`
+  - Offline outbox queue (`sync_queue`) tracking operations (`CREATE`, `UPDATE_STATUS`, `RESOLVE`) without requiring live server
+  - Emergency History screen reading directly from SQLite as single source of truth with source/status filtering, badges, and pull-to-refresh
 - [ ] **Step 6: Cloud Synchronization & First Responder Dashboard**
   - MongoDB migration & cloud ingestion
+  - Opportunistic sync engine processing `sync_queue` outbox
   - Real-time incident mapping & first responder dispatch interface

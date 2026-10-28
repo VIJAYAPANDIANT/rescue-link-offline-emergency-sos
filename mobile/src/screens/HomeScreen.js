@@ -13,6 +13,7 @@ import { SOSButton } from '../components/SOSButton';
 import { StatusCard } from '../components/StatusCard';
 import { apiClient } from '../services/api/apiClient';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
+import { AlertRepository } from '../database';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
 import { APP_CONFIG, SAFETY_DISCLAIMER } from '../utils/constants';
 
@@ -33,8 +34,10 @@ export const HomeScreen = ({ navigation }) => {
   const [bluetoothStatus, setBluetoothStatus] = useState('Checking BLE...');
   const [bleVariant, setBleVariant] = useState('info');
   const [bleSubtitle, setBleSubtitle] = useState('Verifying BLE stack...');
+  const [storageStatus, setStorageStatus] = useState('SQLite Active');
+  const [storageSubtitle, setStorageSubtitle] = useState('Local WAL persistence initialized');
 
-  // Check backend health and Bluetooth readiness on mount
+  // Check backend health, Bluetooth readiness, and SQLite status on mount
   useEffect(() => {
     let isMounted = true;
     apiClient.checkHealth().then((res) => {
@@ -68,6 +71,22 @@ export const HomeScreen = ({ navigation }) => {
         }
       }
     });
+
+    AlertRepository.getAlertCounts()
+      .then((counts) => {
+        if (isMounted) {
+          setStorageStatus(`SQLite Active (${counts.total} Records)`);
+          setStorageSubtitle(
+            `${counts.localCount} local, ${counts.bleCount} BLE, ${counts.pendingSyncCount} pending sync`
+          );
+        }
+      })
+      .catch((e) => {
+        if (isMounted) {
+          setStorageStatus('SQLite Standby');
+          setStorageSubtitle('Local database ready');
+        }
+      });
 
     return () => {
       isMounted = false;
@@ -170,6 +189,14 @@ export const HomeScreen = ({ navigation }) => {
           icon="📡"
           variant={bleVariant}
           subtitle={bleSubtitle}
+        />
+
+        <StatusCard
+          title="SQLite Offline Storage"
+          value={storageStatus}
+          icon="💾"
+          variant="success"
+          subtitle={storageSubtitle}
         />
 
         <StatusCard

@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
+import { AlertRepository, ReceiptRepository } from '../database';
 import { StatusCard } from '../components/StatusCard';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -167,7 +168,29 @@ export const NearbyDevicesScreen = ({ navigation }) => {
 
       const result = await bluetoothService.connectAndReceiveAlert(
         device.id,
-        (alert) => {
+        async (alert) => {
+          // Persist incoming BLE distress alert to SQLite
+          try {
+            const saveRes = await AlertRepository.saveOrUpdateAlert({
+              alertId: alert.alertId,
+              senderName: alert.senderName,
+              emergencyType: alert.emergencyType,
+              details: alert.details,
+              latitude: alert.latitude,
+              longitude: alert.longitude,
+              source: 'bluetooth',
+              deliveryStatus: 'received',
+              ackStatus: 'unacknowledged',
+              syncStatus: 'pending_sync',
+              createdAt: alert.createdAt,
+            });
+
+            if (!saveRes.isNew) {
+              alert.isDuplicate = true;
+            }
+          } catch (dbErr) {
+            console.warn('[NearbyDevicesScreen] SQLite save alert warning:', dbErr.message);
+          }
           setReceivedAlert(alert);
         }
       );
@@ -206,6 +229,19 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       if (result.success) {
         setAckStatus('acknowledged');
         setAckData(result.ackData);
+
+        // Record confirmed ACK receipt in SQLite and mark alert acknowledged
+        try {
+          await ReceiptRepository.recordReceipt({
+            alertId: receivedAlert.alertId,
+            receiptType: 'BLE_ACK_SENT',
+            senderOrDeviceId: activeDeviceId,
+            metadata: result.ackData,
+          });
+        } catch (dbErr) {
+          console.warn('[NearbyDevicesScreen] SQLite receipt save warning:', dbErr.message);
+        }
+
         Alert.alert(
           '✅ Acknowledgment Transmitted',
           `Genuine BLE ACK successfully written to sender device for Alert ID ${receivedAlert.alertId}.`
