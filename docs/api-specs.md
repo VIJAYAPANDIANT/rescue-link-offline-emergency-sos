@@ -308,7 +308,79 @@ Allows the sender to update their alert status to `"Resolved"`.
 
 ---
 
-## 4. Postman Testing Guide (12 Test Scenarios)
+## 4. Bluetooth Low Energy (BLE) Mesh & Direct Communication Protocol (Step 4)
+
+RescueLink implements offline peer-to-peer distress signaling over Bluetooth Low Energy (BLE) GATT profiles.
+
+### 4.1 Custom GATT Service & Characteristics
+
+All RescueLink compatible nodes communicate using 128-bit custom UUIDs:
+
+| Entity | UUID | Properties / Permissions | Role |
+|---|---|---|---|
+| **RescueLink Emergency Service** | `e0a90001-b5a3-f393-e0a9-e50e24dcca9e` | Primary Service | Service identification |
+| **SOS Alert Characteristic** | `e0a90002-b5a3-f393-e0a9-e50e24dcca9e` | `Read`, `Notify` (0x01 Read permission) | Sender hosts; Receiver reads |
+| **SOS Acknowledgment Characteristic** | `e0a90003-b5a3-f393-e0a9-e50e24dcca9e` | `Write`, `WriteWithoutResponse`, `Notify` (0x10 Write permission) | Receiver writes ACK; Sender receives confirmation |
+
+### 4.2 Message Protocol Specification (Version 1)
+
+BLE payloads are serialized as JSON and Base64-encoded to conform to React Native BLE bridge expectations.
+
+#### A. Distress Alert Message (`SOS_ALERT`)
+Sent by the Sender peripheral upon connection.
+
+```json
+{
+  "version": 1,
+  "type": "SOS_ALERT",
+  "alertId": "5cf4d87d-ac72-4a5c-9fb2-dcf475287af9",
+  "emergencyType": "Medical Emergency",
+  "details": "Diabetic shock, requires immediate assistance",
+  "senderName": "Alex Rivera",
+  "latitude": 13.0827,
+  "longitude": 80.2707,
+  "createdAt": "2026-10-28T16:40:00.000Z"
+}
+```
+
+**Payload Constraints & Security:**
+- Maximum MTU payload size: **512 bytes**.
+- `details` bounded to maximum 200 characters to prevent packet fragmentation.
+- `latitude` and `longitude` rounded to 4 decimal places (~11 meters resolution) to reduce size.
+- **Zero Secrets**: Plaintext passwords, bcrypt hashes, and JWT tokens are strictly stripped prior to serialization.
+- Receiver marks alert as: *"Received over nearby Bluetooth (Not verified by central authority)"*.
+
+#### B. Receiver Acknowledgment Message (`SOS_ACK`)
+Transmitted by the Central receiver back to the Sender peripheral via GATT Write with Response.
+
+```json
+{
+  "version": 1,
+  "type": "SOS_ACK",
+  "alertId": "5cf4d87d-ac72-4a5c-9fb2-dcf475287af9",
+  "receiverId": "rx-a8f3d1",
+  "receivedAt": "2026-10-28T16:41:12.300Z"
+}
+```
+
+### 4.3 BLE Communication States
+
+| State | Description |
+|---|---|
+| `BLUETOOTH_OFF` | Bluetooth hardware is disabled on host device |
+| `PERMISSION_REQUIRED` | Runtime permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `ACCESS_FINE_LOCATION`) missing |
+| `SCANNING` | Receiver scanning for peripheral advertisements (30-second timeout) |
+| `ADVERTISING` | Sender broadcasting GATT service beacon (`RescueLink-SOS`) |
+| `CONNECTING` | Receiver establishing GATT connection with Sender |
+| `CONNECTED` | GATT connection active and MTU 512 requested |
+| `ALERT_RECEIVED` | Receiver successfully read and validated `SOS_ALERT` characteristic |
+| `ACK_SENT` | Receiver wrote `SOS_ACK` with confirmation to Sender |
+| `ACK_RECEIVED` | Sender received confirmed acknowledgment from Receiver |
+| `DISCONNECTED` | BLE session cleanly terminated |
+
+---
+
+## 5. Postman Testing Guide (12 Test Scenarios)
 
 1. **Create Alert with Valid JWT**: `POST /api/alerts` with Bearer token and valid body → `201 Created`.
 2. **Each Supported Type**: Test `"Medical Emergency"`, `"Accident"`, `"Personal Safety"`, `"Fire"`, and `"Other"` → all return `201 Created`.
@@ -328,10 +400,10 @@ Allows the sender to update their alert status to `"Resolved"`.
 
 ---
 
-## 5. Planned Endpoints (Step 4+)
+## 6. Planned Endpoints (Step 5+)
 
 | Method | Endpoint | Description | Phase |
 |---|---|---|---|
-| `POST` | `/api/alerts/:id/ack` | Receiver BLE acknowledgement | Step 4 |
-| `POST` | `/api/sync/mesh` | Multi-hop BLE mesh batch packet ingestion | Step 4 |
-| `GET` | `/api/responder/live-feed` | Real-time map distress feed for first responders | Step 4 |
+| `POST` | `/api/sync/offline-records` | Batch synchronization of SQLite offline alerts | Step 5 |
+| `POST` | `/api/sync/mesh-relays` | Multi-hop BLE relay ingestion | Step 5 |
+| `GET` | `/api/responder/live-feed` | Real-time map distress feed for first responders | Step 5 |

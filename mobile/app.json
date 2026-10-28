@@ -13,17 +13,38 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rescuelink.emergency.sos"
+      "bundleIdentifier": "com.rescuelink.emergency.sos",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "RescueLink uses Bluetooth Low Energy to detect nearby distress beacons and relay emergency alerts offline."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F8FAFC"
       },
-      "package": "com.rescuelink.emergency.sos"
+      "package": "com.rescuelink.emergency.sos",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "RescueLink requires Bluetooth to discover and communicate with nearby emergency responders."
+        }
+      ]
+    ]
   }
 }

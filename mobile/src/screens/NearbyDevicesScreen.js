@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,36 +6,241 @@ import {
   ScrollView,
   SafeAreaView,
   Platform,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
+import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
 import { StatusCard } from '../components/StatusCard';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { colors, spacing, borderRadius } from '../utils/theme';
+import { colors, spacing, borderRadius, shadows } from '../utils/theme';
+import { formatCoordinates, formatTimestamp } from '../utils/helpers';
 
 /**
- * NearbyDevicesScreen
+ * NearbyDevicesScreen (BLE Central / Receiver Workflow)
  *
- * Visualizes local peer-to-peer mesh topology.
- *
- * Safety & Integrity Constraint:
- * - Does NOT fabricate fake devices.
- * - Clearly documents that BLE scanning/advertising awaits Step 3.
+ * Implements:
+ * 1. Scanning for nearby RescueLink SOS peripheral broadcasters.
+ * 2. Real discovered device list with RSSI signal metrics (no fake devices).
+ * 3. Connecting to a selected sender node over GATT.
+ * 4. Reading and validating the SOS distress message offline (without internet).
+ * 5. Displaying distress details with offline security disclaimer and duplicate checking.
+ * 6. Transmitting genuine acknowledgment over BLE (GATT write confirmation).
+ * 7. Disconnecting and clean teardown on unmount.
  */
 export const NearbyDevicesScreen = ({ navigation }) => {
-  const [isSimulatingScan, setIsSimulatingScan] = useState(false);
+  // BLE Hardware State
+  const [hardwareStatus, setHardwareStatus] = useState('Checking BLE interface...');
+  const [hardwareVariant, setHardwareVariant] = useState('info');
+  const [isBleReady, setIsBleReady] = useState(false);
+
+  // Scan State
+  const [isScanning, setIsScanning] = useState(false);
+  const [discoveredDevices, setDiscoveredDevices] = useState([]);
   const [scanMessage, setScanMessage] = useState(null);
 
-  // Non-destructive simulated scan check to test UX interaction
-  const handleCheckBLE = () => {
-    setIsSimulatingScan(true);
-    setScanMessage('Verifying BLE stack interface...');
+  // Connection State
+  const [activeDeviceId, setActiveDeviceId] = useState(null);
+  const [connectionState, setConnectionState] = useState(BLE_STATES.IDLE);
+  const [isConnecting, setIsConnecting] = useState(false);
 
-    setTimeout(() => {
-      setIsSimulatingScan(false);
+  // Received Alert State
+  const [receivedAlert, setReceivedAlert] = useState(null);
+  const [ackStatus, setAckStatus] = useState('none'); // 'none' | 'sending' | 'acknowledged' | 'failed'
+  const [ackData, setAckData] = useState(null);
+  const [isAcknowledging, setIsAcknowledging] = useState(false);
+
+  // References for unmount cleanup
+  const activeDeviceRef = useRef(null);
+  const isScanningRef = useRef(false);
+
+  useEffect(() => {
+    activeDeviceRef.current = activeDeviceId;
+  }, [activeDeviceId]);
+
+  useEffect(() => {
+    isScanningRef.current = isScanning;
+  }, [isScanning]);
+
+  // Check BLE stack readiness on mount
+  useEffect(() => {
+    checkBLEAvailability();
+
+    // Clean up scans and connections on unmount
+    return () => {
+      if (isScanningRef.current) {
+        bluetoothService.stopScanning();
+      }
+      if (activeDeviceRef.current) {
+        bluetoothService.disconnectDevice(activeDeviceRef.current);
+      }
+    };
+  }, []);
+
+  const checkBLEAvailability = async () => {
+    const result = await bluetoothService.checkBluetoothAvailability();
+    if (result.supported) {
+      if (result.state === BLE_STATES.IDLE) {
+        setHardwareStatus('BLE Ready (Powered On)');
+        setHardwareVariant('success');
+        setIsBleReady(true);
+      } else {
+        setHardwareStatus('Bluetooth Disabled');
+        setHardwareVariant('warning');
+        setIsBleReady(false);
+        setScanMessage('Please enable Bluetooth in your device settings.');
+      }
+    } else {
+      setHardwareStatus(result.message || 'BLE Native Module Unavailable');
+      setHardwareVariant('danger');
+      setIsBleReady(false);
       setScanMessage(
-        'BLE hardware interface initialized in standby. Real discovery scanning will be enabled in Step 3.'
+        result.message ||
+          'Native BLE requires an Expo Development Build (npx expo run:android). Not supported in Expo Go.'
       );
-    }, 1200);
+    }
+  };
+
+  // Start BLE Discovery Scan
+  const handleStartScan = async () => {
+    setScanMessage(null);
+    setDiscoveredDevices([]);
+
+    const result = await bluetoothService.startScanningForSenders({
+      onDeviceFound: (device) => {
+        setDiscoveredDevices((prev) => {
+          const exists = prev.some((d) => d.id === device.id);
+          if (exists) {
+            return prev.map((d) => (d.id === device.id ? device : d));
+          }
+          return [...prev, device];
+        });
+      },
+      onError: (err) => {
+        setIsScanning(false);
+        setScanMessage(`Scan error: ${err.message}`);
+      },
+      onScanStopped: () => {
+        setIsScanning(false);
+        setScanMessage('Scan window concluded (30s timeout).');
+      },
+    });
+
+    if (result.success) {
+      setIsScanning(true);
+      setScanMessage('Scanning for nearby RescueLink SOS beacons...');
+    } else {
+      setIsScanning(false);
+      setScanMessage(result.error || 'Failed to start BLE scan.');
+      if (result.state === BLE_STATES.PERMISSION_REQUIRED) {
+        Alert.alert(
+          'Bluetooth Permissions Required',
+          'RescueLink needs Bluetooth Scan & Connect permissions to discover nearby SOS alerts. Please grant them in device settings.'
+        );
+      }
+    }
+  };
+
+  // Stop BLE Discovery Scan
+  const handleStopScan = () => {
+    bluetoothService.stopScanning();
+    setIsScanning(false);
+    setScanMessage('Scan stopped by user.');
+  };
+
+  // Connect to Discovered Device & Read SOS Alert
+  const handleConnectAndReadAlert = async (device) => {
+    try {
+      setIsConnecting(true);
+      setActiveDeviceId(device.id);
+      setConnectionState(BLE_STATES.CONNECTING);
+      setScanMessage(`Connecting to ${device.name} (${device.id})...`);
+      setAckStatus('none');
+      setAckData(null);
+
+      // Stop scanning before connecting
+      if (isScanning) {
+        bluetoothService.stopScanning();
+        setIsScanning(false);
+      }
+
+      const result = await bluetoothService.connectAndReceiveAlert(
+        device.id,
+        (alert) => {
+          setReceivedAlert(alert);
+        }
+      );
+
+      if (result.success && result.alert) {
+        setConnectionState(BLE_STATES.CONNECTED);
+        setReceivedAlert(result.alert);
+        setScanMessage(`Connected to ${device.name}. Distress alert received!`);
+      }
+    } catch (err) {
+      console.error('[NearbyDevicesScreen] Connect/Read error:', err.message);
+      setConnectionState(BLE_STATES.ERROR);
+      setScanMessage(`Failed to read SOS alert: ${err.message}`);
+      Alert.alert('Connection Failed', err.message);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Transmit Genuine Acknowledgment over BLE
+  const handleSendAcknowledgment = async () => {
+    if (!activeDeviceId || !receivedAlert?.alertId) {
+      Alert.alert('Error', 'No active connection or alert ID to acknowledge.');
+      return;
+    }
+
+    try {
+      setIsAcknowledging(true);
+      setAckStatus('sending');
+
+      const result = await bluetoothService.sendAcknowledgment(
+        activeDeviceId,
+        receivedAlert.alertId
+      );
+
+      if (result.success) {
+        setAckStatus('acknowledged');
+        setAckData(result.ackData);
+        Alert.alert(
+          '✅ Acknowledgment Transmitted',
+          `Genuine BLE ACK successfully written to sender device for Alert ID ${receivedAlert.alertId}.`
+        );
+      }
+    } catch (err) {
+      console.error('[NearbyDevicesScreen] ACK error:', err.message);
+      setAckStatus('failed');
+      Alert.alert('Acknowledgment Failed', err.message);
+    } finally {
+      setIsAcknowledging(false);
+    }
+  };
+
+  // Disconnect from Active Device
+  const handleDisconnect = async () => {
+    if (activeDeviceId) {
+      await bluetoothService.disconnectDevice(activeDeviceId);
+      setActiveDeviceId(null);
+      setConnectionState(BLE_STATES.DISCONNECTED);
+      setScanMessage('Disconnected from device.');
+    }
+  };
+
+  // Clear current received alert from screen
+  const handleClearAlert = () => {
+    if (activeDeviceId) {
+      bluetoothService.disconnectDevice(activeDeviceId);
+    }
+    setActiveDeviceId(null);
+    setReceivedAlert(null);
+    setAckStatus('none');
+    setAckData(null);
+    setConnectionState(BLE_STATES.IDLE);
+    setScanMessage(null);
   };
 
   return (
@@ -46,71 +251,242 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>Nearby Devices</Text>
+          <Text style={styles.screenTitle}>Nearby SOS Devices</Text>
           <Text style={styles.screenSubtitle}>
-            Offline Bluetooth Low Energy (BLE) Mesh Network
+            Offline BLE Mesh Receiver · Scan, Connect & Acknowledge
           </Text>
         </View>
 
-        {/* Current BLE Radio Hardware Status */}
+        {/* Hardware & BLE Status */}
         <StatusCard
-          title="Bluetooth Radio State"
-          value="BLE Standby"
+          title="BLE Hardware Status"
+          value={hardwareStatus}
           icon="📡"
-          variant="info"
-          subtitle="Prototype mode · Ready for peripheral & central roles"
+          variant={hardwareVariant}
+          subtitle="Real Bluetooth Low Energy Central subsystem"
         />
 
-        <StatusCard
-          title="Mesh Protocol Layer"
-          value="Awaiting Step 3"
-          icon="🔗"
-          variant="warning"
-          subtitle="GATT advertising, scanning, and multi-hop forwarding logic"
-        />
+        {/* Active Connection Status if connected */}
+        {activeDeviceId ? (
+          <StatusCard
+            title="Connected Sender Node"
+            value={connectionState}
+            icon="🔗"
+            variant={connectionState === BLE_STATES.CONNECTED ? 'success' : 'warning'}
+            subtitle={`Device ID: ${activeDeviceId}`}
+          />
+        ) : null}
 
-        {/* Architectural Implementation Banner */}
-        <View style={styles.roadmapCard}>
-          <View style={styles.roadmapHeader}>
-            <Text style={styles.roadmapBadge}>PLANNED MODULE (STEP 3)</Text>
-            <Text style={styles.roadmapTitle}>Bluetooth Mesh Pipeline</Text>
-          </View>
-          <Text style={styles.roadmapText}>
-            RescueLink uses Bluetooth Low Energy (BLE) peripheral advertising and
-            central scanning so that devices without cellular signal can route emergency
-            packets to one another.
-          </Text>
-          <View style={styles.pipelineSteps}>
-            <Text style={styles.pipelineItem}>
-              1. Local device broadcasts encrypted SOS beacon (TX advertisement)
-            </Text>
-            <Text style={styles.pipelineItem}>
-              2. Peer nodes receive beacon via background BLE scan
-            </Text>
-            <Text style={styles.pipelineItem}>
-              3. Packets hop node-to-node until reaching an internet gateway
-            </Text>
-          </View>
+        {/* Scan Controls */}
+        <View style={styles.controlsRow}>
+          {!isScanning ? (
+            <PrimaryButton
+              title="Start BLE Scan"
+              onPress={handleStartScan}
+              variant="primary"
+              icon="🔍"
+              disabled={isConnecting}
+            />
+          ) : (
+            <PrimaryButton
+              title="Stop BLE Scan"
+              onPress={handleStopScan}
+              variant="secondary"
+              icon="⏹️"
+            />
+          )}
         </View>
 
-        {/* Friendly Empty State - No Fake Devices Fabricated */}
-        <EmptyState
-          icon="👥"
-          badgeText="Awaiting Step 3 BLE Module"
-          title="No Nearby Devices Discovered"
-          description="In this Step 1 prototype, live BLE discovery is disabled. When active BLE scanning is enabled in Step 3, peer RescueLink smartphones within 10 to 30 meters will be listed here with signal strength (RSSI)."
-          actionLabel={isSimulatingScan ? 'Scanning...' : 'Test BLE Radio Interface'}
-          onAction={handleCheckBLE}
-        />
-
+        {/* Scan Message / In-progress Indicator */}
         {scanMessage ? (
-          <View style={styles.statusFeedbackBox}>
-            <Text style={styles.statusFeedbackText}>ℹ️ {scanMessage}</Text>
+          <View style={styles.statusBox}>
+            {isScanning ? (
+              <ActivityIndicator
+                size="small"
+                color={colors.info}
+                style={{ marginRight: 8 }}
+              />
+            ) : (
+              <Text style={styles.statusEmoji}>ℹ️</Text>
+            )}
+            <Text style={styles.statusBoxText}>{scanMessage}</Text>
           </View>
         ) : null}
 
-        {/* Navigation Action */}
-        <View style={styles.actionContainer}>
+        {/* Received Distress Alert Card */}
+        {receivedAlert ? (
+          <View style={[styles.alertCard, shadows.cardElevated]}>
+            <View style={styles.alertCardHeader}>
+              <View style={styles.alertBadgeRow}>
+                <Text style={styles.emergencyBadge}>
+                  🚨 {receivedAlert.emergencyType || 'EMERGENCY'}
+                </Text>
+                {receivedAlert.isDuplicate ? (
+                  <Text style={styles.duplicateBadge}>DUPLICATE ALERT</Text>
+                ) : null}
+              </View>
+              <Text style={styles.alertCardTitle}>Incoming SOS Distress Alert</Text>
+            </View>
+
+            {/* Offline Disclaimer */}
+            <View style={styles.disclaimerBox}>
+              <Text style={styles.disclaimerIcon}>⚠️</Text>
+              <Text style={styles.disclaimerText}>
+                Received directly over nearby Bluetooth. Not verified by a central server.
+              </Text>
+            </View>
+
+            {/* Alert Content Table */}
+            <View style={styles.alertDetailsTable}>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Alert ID:</Text>
+                <Text style={styles.detailValue} selectable>
+                  {receivedAlert.alertId}
+                </Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Sender Name:</Text>
+                <Text style={styles.detailValueBold}>
+                  {receivedAlert.senderName || 'Anonymous'}
+                </Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Timestamp:</Text>
+                <Text style={styles.detailValue}>
+                  {formatTimestamp(receivedAlert.createdAt)}
+                </Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>GPS Coordinates:</Text>
+                <Text style={styles.detailValue}>
+                  {typeof receivedAlert.latitude === 'number' &&
+                  typeof receivedAlert.longitude === 'number'
+                    ? formatCoordinates(receivedAlert.latitude, receivedAlert.longitude)
+                    : 'None (Omitted by sender)'}
+                </Text>
+              </View>
+
+              {receivedAlert.details ? (
+                <View style={styles.detailsBlock}>
+                  <Text style={styles.detailLabel}>Distress Details:</Text>
+                  <Text style={styles.detailsBlockText}>{receivedAlert.details}</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {/* Acknowledgment Section */}
+            <View style={styles.ackSection}>
+              {ackStatus === 'acknowledged' ? (
+                <View style={styles.ackSuccessCard}>
+                  <Text style={styles.ackSuccessTitle}>✅ Acknowledgment Confirmed</Text>
+                  <Text style={styles.ackSuccessText}>
+                    Genuine BLE ACK sent to sender. Receiver Node ID:{' '}
+                    {ackData?.receiverId || 'Local-Receiver'}
+                  </Text>
+                </View>
+              ) : (
+                <PrimaryButton
+                  title={isAcknowledging ? 'Transmitting ACK...' : 'Acknowledge Receipt over BLE'}
+                  onPress={handleSendAcknowledgment}
+                  variant="success"
+                  icon="🤝"
+                  disabled={isAcknowledging}
+                />
+              )}
+            </View>
+
+            {/* Alert Actions: Disconnect / Clear */}
+            <View style={styles.alertActionButtons}>
+              <TouchableOpacity
+                style={styles.disconnectBtn}
+                onPress={handleDisconnect}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.disconnectBtnText}>Disconnect Device</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.clearBtn}
+                onPress={handleClearAlert}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.clearBtnText}>Dismiss Alert</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Discovered Devices List */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            DISCOVERED NODES ({discoveredDevices.length})
+          </Text>
+          <Text style={styles.sectionCaption}>
+            Real Bluetooth broadcasters discovered within range
+          </Text>
+        </View>
+
+        {discoveredDevices.length === 0 ? (
+          <EmptyState
+            icon="👥"
+            badgeText={isScanning ? 'Scan in Progress' : 'No Devices Found'}
+            title="No Nearby Senders Discovered"
+            description="When another device is advertising an emergency SOS beacon on the Send SOS screen, it will appear here with its signal strength (RSSI)."
+            actionLabel={isScanning ? 'Scanning...' : 'Scan for Devices'}
+            onAction={isScanning ? handleStopScan : handleStartScan}
+          />
+        ) : (
+          <View style={styles.deviceList}>
+            {discoveredDevices.map((device) => {
+              const isSelected = activeDeviceId === device.id;
+              return (
+                <View
+                  key={device.id}
+                  style={[
+                    styles.deviceCard,
+                    shadows.card,
+                    isSelected && styles.deviceCardActive,
+                  ]}
+                >
+                  <View style={styles.deviceInfoRow}>
+                    <View style={styles.deviceIconCircle}>
+                      <Text style={styles.deviceIcon}>📱</Text>
+                    </View>
+                    <View style={styles.deviceDetails}>
+                      <Text style={styles.deviceName}>{device.name}</Text>
+                      <Text style={styles.deviceId} numberOfLines={1}>
+                        ID: {device.id}
+                      </Text>
+                      <Text style={styles.deviceRssi}>
+                        Signal: {device.rssi ? `${device.rssi} dBm` : 'Unknown'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.deviceActionRow}>
+                    {isSelected ? (
+                      <View style={styles.connectedBadge}>
+                        <Text style={styles.connectedBadgeText}>● Connected</Text>
+                      </View>
+                    ) : (
+                      <PrimaryButton
+                        title={isConnecting ? 'Connecting...' : 'Connect & Read SOS'}
+                        onPress={() => handleConnectAndReadAlert(device)}
+                        variant="primary"
+                        disabled={isConnecting}
+                      />
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Navigation Portal Back */}
+        <View style={styles.footerAction}>
           <PrimaryButton
             title="Return to Dashboard"
             onPress={() => navigation.navigate('Home')}
@@ -145,69 +521,276 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-  roadmapCard: {
+  controlsRow: {
+    marginVertical: spacing.sm,
+  },
+  statusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.infoLight,
+    borderWidth: 1,
+    borderColor: colors.infoBorder,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginVertical: spacing.sm,
+  },
+  statusEmoji: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  statusBoxText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.infoDark,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  sectionHeader: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    letterSpacing: 1,
+  },
+  sectionCaption: {
+    fontSize: 11,
+    color: colors.textTertiary,
+    marginTop: 1,
+  },
+  deviceList: {
+    gap: spacing.sm,
+  },
+  deviceCard: {
     backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.lg,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    marginVertical: spacing.sm,
   },
-  roadmapHeader: {
-    marginBottom: spacing.xs,
+  deviceCardActive: {
+    borderColor: colors.success,
+    backgroundColor: colors.successLight,
   },
-  roadmapBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.infoLight,
-    color: colors.infoDark,
-    fontSize: 10,
-    fontWeight: '800',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: borderRadius.round,
-    letterSpacing: 0.8,
-    borderWidth: 1,
-    borderColor: colors.infoBorder,
-    marginBottom: 4,
+  deviceInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
   },
-  roadmapTitle: {
-    fontSize: 15,
+  deviceIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
+  },
+  deviceIcon: {
+    fontSize: 22,
+  },
+  deviceDetails: {
+    flex: 1,
+  },
+  deviceName: {
+    fontSize: 16,
     fontWeight: '700',
     color: colors.textPrimary,
   },
-  roadmapText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 17,
-    marginTop: 4,
-  },
-  pipelineSteps: {
-    marginTop: spacing.sm,
-    backgroundColor: colors.surfaceSubtle,
-    padding: spacing.sm,
-    borderRadius: borderRadius.sm,
-    gap: 4,
-  },
-  pipelineItem: {
+  deviceId: {
     fontSize: 11,
-    color: colors.textSecondary,
+    color: colors.textTertiary,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginTop: 1,
+  },
+  deviceRssi: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.infoDark,
+    marginTop: 2,
+  },
+  deviceActionRow: {
+    marginTop: spacing.xs,
+  },
+  connectedBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.success,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.round,
+  },
+  connectedBadgeText: {
+    color: colors.textInverse,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  alertCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.xl,
+    padding: spacing.lg,
+    marginVertical: spacing.md,
+    borderWidth: 2,
+    borderColor: colors.primary,
+  },
+  alertCardHeader: {
+    marginBottom: spacing.sm,
+  },
+  alertBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: 6,
+  },
+  emergencyBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primaryLight,
+    color: colors.primaryDark,
+    fontSize: 11,
+    fontWeight: '800',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: borderRadius.round,
+    letterSpacing: 0.5,
+  },
+  duplicateBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.warningLight,
+    color: colors.warningDark,
+    fontSize: 11,
+    fontWeight: '800',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: borderRadius.round,
+    letterSpacing: 0.5,
+  },
+  alertCardTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  disclaimerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.warningLight,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginVertical: spacing.sm,
+    gap: 6,
+  },
+  disclaimerIcon: {
+    fontSize: 16,
+  },
+  disclaimerText: {
+    flex: 1,
+    fontSize: 11,
+    color: colors.warningDark,
+    fontWeight: '600',
     lineHeight: 15,
   },
-  statusFeedbackBox: {
-    backgroundColor: colors.infoLight,
+  alertDetailsTable: {
+    backgroundColor: colors.surfaceSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.infoBorder,
+    gap: 8,
     marginVertical: spacing.sm,
   },
-  statusFeedbackText: {
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  detailLabel: {
     fontSize: 12,
-    color: colors.infoDark,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    width: 100,
+  },
+  detailValue: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textPrimary,
+    textAlign: 'right',
+  },
+  detailValueBold: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'right',
+  },
+  detailsBlock: {
+    marginTop: 4,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  detailsBlockText: {
+    fontSize: 13,
+    color: colors.textPrimary,
+    marginTop: 3,
+    lineHeight: 18,
+  },
+  ackSection: {
+    marginTop: spacing.md,
+  },
+  ackSuccessCard: {
+    backgroundColor: colors.successLight,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+  },
+  ackSuccessTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.successDark,
+    marginBottom: 2,
+  },
+  ackSuccessText: {
+    fontSize: 12,
+    color: colors.successDark,
     lineHeight: 16,
   },
-  actionContainer: {
+  alertActionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  disconnectBtn: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+  },
+  disconnectBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  clearBtn: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+  },
+  clearBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  footerAction: {
+    marginTop: spacing.xl,
   },
 });
 

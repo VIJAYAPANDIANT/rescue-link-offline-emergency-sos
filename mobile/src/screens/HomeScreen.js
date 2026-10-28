@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { SOSButton } from '../components/SOSButton';
 import { StatusCard } from '../components/StatusCard';
 import { apiClient } from '../services/api/apiClient';
+import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
 import { APP_CONFIG, SAFETY_DISCLAIMER } from '../utils/constants';
 
@@ -29,8 +30,11 @@ export const HomeScreen = ({ navigation }) => {
   const { user, isAuthenticated } = useAuth();
   const [serverStatus, setServerStatus] = useState('Checking...');
   const [isServerHealthy, setIsServerHealthy] = useState(false);
+  const [bluetoothStatus, setBluetoothStatus] = useState('Checking BLE...');
+  const [bleVariant, setBleVariant] = useState('info');
+  const [bleSubtitle, setBleSubtitle] = useState('Verifying BLE stack...');
 
-  // Check backend health on mount
+  // Check backend health and Bluetooth readiness on mount
   useEffect(() => {
     let isMounted = true;
     apiClient.checkHealth().then((res) => {
@@ -44,6 +48,27 @@ export const HomeScreen = ({ navigation }) => {
         }
       }
     });
+
+    bluetoothService.checkBluetoothAvailability().then((res) => {
+      if (isMounted) {
+        if (res.supported) {
+          if (res.state === BLE_STATES.IDLE) {
+            setBluetoothStatus('BLE Ready (Powered On)');
+            setBleVariant('success');
+            setBleSubtitle('Standby · No active peer connection');
+          } else {
+            setBluetoothStatus('Bluetooth Disabled');
+            setBleVariant('warning');
+            setBleSubtitle('Enable Bluetooth in device settings');
+          }
+        } else {
+          setBluetoothStatus('Dev Build Required');
+          setBleVariant('info');
+          setBleSubtitle('Native BLE requires an Expo dev build');
+        }
+      }
+    });
+
     return () => {
       isMounted = false;
     };
@@ -141,10 +166,10 @@ export const HomeScreen = ({ navigation }) => {
 
         <StatusCard
           title="Bluetooth Radio"
-          value="BLE Standby"
+          value={bluetoothStatus}
           icon="📡"
-          variant="info"
-          subtitle="Idle · No active BLE peer connection exists"
+          variant={bleVariant}
+          subtitle={bleSubtitle}
         />
 
         <StatusCard

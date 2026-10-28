@@ -1,74 +1,97 @@
 /**
- * Bluetooth Low Energy (BLE) Service Module
+ * RescueLink Unified Bluetooth Low Energy Service
  *
- * NOTE: Real device-to-device BLE advertising and peripheral scanning will be
- * implemented in Step 3 using react-native-ble-plx / expo-ble.
- *
- * This module defines the architectural interface for BLE mesh communication.
+ * Coordinates Central (Receiver) and Peripheral (Sender) BLE capabilities,
+ * permission management, and state reporting.
  */
 
-export const BLE_STATE = {
-  UNAVAILABLE: 'UNAVAILABLE',
-  POWERED_OFF: 'POWERED_OFF',
-  STANDBY: 'STANDBY',
-  SCANNING: 'SCANNING',
-  BROADCASTING: 'BROADCASTING',
-};
+import { bleCentralService } from './bleCentralService';
+import { blePeripheralService } from './blePeripheralService';
+import { BlePermissionsManager } from './blePermissions';
+import {
+  RESCUELINK_SERVICE_UUID,
+  SOS_ALERT_CHAR_UUID,
+  SOS_ACK_CHAR_UUID,
+  BLE_STATES,
+  BLE_PROTOCOL,
+} from './bleConstants';
 
 class BluetoothService {
   constructor() {
-    this.currentState = BLE_STATE.STANDBY;
-    this.discoveredDevices = [];
-    this.isImplemented = false; // Flag indicating Step 3 BLE module status
+    this.central = bleCentralService;
+    this.peripheral = blePeripheralService;
   }
 
   /**
-   * Check Bluetooth hardware status
+   * Request Bluetooth permissions for Central scanning or Peripheral advertising.
+   */
+  async requestPermissions(options = {}) {
+    return BlePermissionsManager.requestBluetoothPermissions(options);
+  }
+
+  /**
+   * Check whether Bluetooth hardware and native modules are available.
    */
   async checkBluetoothAvailability() {
-    return {
-      available: true,
-      state: this.currentState,
-      isPrototype: true,
-      message: 'BLE radio interface ready for Step 3 implementation',
-    };
+    return this.central.checkSupport();
   }
 
   /**
-   * Start scanning for nearby RescueLink peer devices
-   * (Placeholder awaiting Step 3)
+   * Sender Role: Broadcast an emergency SOS alert as a BLE Peripheral.
    */
-  async startScan() {
-    console.log('[BLE Service] Scanning requested (Awaiting Step 3 implementation)');
-    return {
-      success: true,
-      scanning: false,
-      discoveredCount: 0,
-      note: 'BLE scanning will be activated in Step 3',
-    };
+  async startAdvertisingSOS(alertData, onAckReceived) {
+    return this.peripheral.startAdvertisingSOS(alertData, onAckReceived);
   }
 
   /**
-   * Stop ongoing BLE scan
+   * Sender Role: Stop BLE advertising and release GATT server resources.
    */
-  async stopScan() {
-    console.log('[BLE Service] Stop scan requested');
-    return { success: true };
+  async stopAdvertisingSOS() {
+    return this.peripheral.stopAdvertising();
   }
 
   /**
-   * Broadcast emergency SOS payload over BLE advertisement packets
-   * (Placeholder awaiting Step 3)
+   * Receiver Role: Scan for nearby RescueLink SOS peripheral broadcasters.
    */
-  async broadcastSOSPacket(packetPayload) {
-    console.log('[BLE Service] Packet broadcast requested:', packetPayload);
-    return {
-      broadcasted: false,
-      isDemo: true,
-      message: 'Real BLE broadcasting will be enabled in Step 3. Alert saved locally as draft.',
-    };
+  async startScanningForSenders(callbacks) {
+    return this.central.startScan(callbacks);
+  }
+
+  /**
+   * Receiver Role: Stop active BLE scan.
+   */
+  stopScanning() {
+    return this.central.stopScan();
+  }
+
+  /**
+   * Receiver Role: Connect to a discovered sender device and read distress alert.
+   */
+  async connectAndReceiveAlert(deviceId, onAlertReceived) {
+    return this.central.connectAndReceiveAlert(deviceId, onAlertReceived);
+  }
+
+  /**
+   * Receiver Role: Transmit a genuine acknowledgment back to sender over BLE.
+   */
+  async sendAcknowledgment(deviceId, alertId) {
+    return this.central.sendAcknowledgment(deviceId, alertId);
+  }
+
+  /**
+   * Disconnect active device.
+   */
+  async disconnectDevice(deviceId) {
+    return this.central.disconnectDevice(deviceId);
   }
 }
 
 export const bluetoothService = new BluetoothService();
+export {
+  RESCUELINK_SERVICE_UUID,
+  SOS_ALERT_CHAR_UUID,
+  SOS_ACK_CHAR_UUID,
+  BLE_STATES,
+  BLE_PROTOCOL,
+};
 export default bluetoothService;

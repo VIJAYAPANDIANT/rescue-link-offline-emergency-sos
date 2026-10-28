@@ -249,10 +249,16 @@ c:\Offline Emergency SOS/
   - REST endpoints: `POST /api/alerts`, `GET /api/alerts`, `GET /api/alerts/:id`, `PATCH /api/alerts/:id/status`
   - React Native Send SOS form connected with authenticated submission, optional location acquisition, and review modal
   - Emergency History connected to live backend with pull-to-refresh and "Mark as Resolved" capability
-- [ ] **Step 4: Bluetooth Low Energy (BLE) Mesh & Local SQLite Database**
-  - Native BLE peripheral advertising & central scanning
-  - Multi-hop packet relaying and receiver acknowledgment
-  - Offline-first SQLite database schema & opportunistic sync
-- [ ] **Step 5: Cloud Synchronization & First Responder Dashboard**
+- [x] **Step 4: Real Bluetooth Low Energy (BLE) Communication** (Completed)
+  - BLE Central (`react-native-ble-plx`) & Peripheral (`react-native-ble-peripheral`) native architecture
+  - Custom 128-bit GATT Service (`e0a90001-...`) and Characteristics for Alert Read/Notify (`e0a90002-...`) and Acknowledgment Write (`e0a90003-...`)
+  - Version 1 JSON Message Protocol with MTU 512-byte safety bounds, Base64 serialization, and credential sanitization
+  - Sender workflow in `SendSOSScreen.js`: online backend creation or offline local draft, deliberate BLE broadcast trigger, live GATT status, and ACK listener
+  - Receiver workflow in `NearbyDevicesScreen.js`: discovery scan, real device list with RSSI metrics, GATT connection, offline alert validation, offline security disclaimer, and genuine BLE ACK transmission
+  - Comprehensive unit test suite covering protocol validation, malformed payloads, schema checks, and payload bounds
+- [ ] **Step 5: Offline-First SQLite Database & Opportunistic Sync**
+  - Relational SQLite schema for local alerts, peer logs, and unsynced drafts
+  - Automatic synchronization when cloud/internet connectivity is restored
+- [ ] **Step 6: Cloud Synchronization & First Responder Dashboard**
   - MongoDB migration & cloud ingestion
   - Real-time incident mapping & first responder dispatch interface

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,27 +11,26 @@ import {
   Platform,
   Switch,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
 import { locationService } from '../services/location/locationService';
+import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
 import { EmergencyTypeSelector } from '../components/EmergencyTypeSelector';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
-import { formatCoordinates, generateDraftId } from '../utils/helpers';
+import { formatCoordinates, generateDraftId, formatTimestamp } from '../utils/helpers';
 
 /**
- * SendSOSScreen
+ * SendSOSScreen (Sender Workflow)
  *
- * Emergency SOS configuration and backend submission:
- * 1. Emergency Type Selection (Medical Emergency, Accident, Personal Safety, Fire, Other)
- * 2. Optional Location Acquisition & Indicator (Attached / Unavailable / Omitted)
- * 3. Additional Details input
- * 4. Optional Contact Details input
- * 5. Pre-dispatch Review & Confirmation Dialog
- * 6. Authenticated Submission to POST /api/alerts
- * 7. Success & Error States with clear safety disclaimers
+ * 1. Creates SOS alert via backend API if authenticated and online.
+ * 2. Retains local alert creation path if backend is unreachable.
+ * 3. Provides deliberate action to broadcast alert via real BLE advertising.
+ * 4. Displays real BLE states (Advertising, Connected, Ack Received, Error).
+ * 5. Cleans up BLE advertising resources on unmount.
  */
 export const SendSOSScreen = ({ navigation, route }) => {
   const onDraftCreated = route.params?.onDraftCreated;
@@ -51,6 +50,19 @@ export const SendSOSScreen = ({ navigation, route }) => {
   const [locationStatus, setLocationStatus] = useState('Location omitted by user');
   const [acquiredCoords, setAcquiredCoords] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+
+  // BLE Broadcast State
+  const [isAdvertising, setIsAdvertising] = useState(false);
+  const [bleStatusText, setBleStatusText] = useState(null);
+  const [bleAckInfo, setBleAckInfo] = useState(null);
+  const [bleError, setBleError] = useState(null);
+
+  // Stop advertising when unmounting
+  useEffect(() => {
+    return () => {
+      bluetoothService.stopAdvertisingSOS();
+    };
+  }, []);
 
   // Update contactName when user logs in
   useEffect(() => {
@@ -90,23 +102,13 @@ export const SendSOSScreen = ({ navigation, route }) => {
   const handleReviewAndSubmit = () => {
     setErrorMessage(null);
 
-    if (!isAuthenticated) {
-      Alert.alert(
-        'Authentication Required',
-        'You are currently in Guest Mode. Please sign in with your responder account to submit emergency alerts to the backend.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Sign In', onPress: () => navigation.navigate('Login') },
-        ]
-      );
-      return;
-    }
+    const locSummary = acquiredCoords
+      ? `${acquiredCoords.latitude}°, ${acquiredCoords.longitude}°`
+      : 'None (Omitted)';
 
     Alert.alert(
       '⚠️ Confirm Emergency SOS Submission',
-      `You are creating an emergency alert:\n\nType: ${selectedTypeConfig.label}\nLocation: ${
-        acquiredCoords ? `${acquiredCoords.latitude}°, ${acquiredCoords.longitude}°` : 'None (Omitted)'
-      }\n\nNotice: This creates a permanent alert record on the RescueLink backend. Direct Bluetooth mesh broadcast and 911 dispatch await subsequent modules.\n\nProceed to submit?`,
+      `Category: ${selectedTypeConfig.label}\nLocation: ${locSummary}\n\nNotice: This records an official emergency alert. Proceed?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -118,7 +120,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
     );
   };
 
-  // Submit Alert to Backend API
+  // Submit Alert to Backend API or fallback to Offline Local Draft
   const executeAlertSubmission = async () => {
     if (isSubmitting) return; // Prevent duplicate submissions
     setIsSubmitting(true);
@@ -135,21 +137,94 @@ export const SendSOSScreen = ({ navigation, route }) => {
       location: includeLocation && acquiredCoords ? acquiredCoords : null,
     };
 
-    const response = await apiClient.createAlert(payload);
-    setIsSubmitting(false);
+    if (isAuthenticated) {
+      // 1. Online / Authenticated Path
+      const response = await apiClient.createAlert(payload);
+      setIsSubmitting(false);
 
-    if (response.success && response.data) {
-      setCreatedAlert(response.data);
-
-      // Also notify parent if handler provided
-      if (typeof onDraftCreated === 'function') {
-        onDraftCreated(response.data);
+      if (response.success && response.data) {
+        setCreatedAlert(response.data);
+        if (typeof onDraftCreated === 'function') {
+          onDraftCreated(response.data);
+        }
+      } else {
+        // Backend unavailable or error -> Offer offline fallback
+        Alert.alert(
+          'Server Unreachable',
+          'Unable to reach the RescueLink backend. Would you like to create an offline local alert and broadcast it over Bluetooth?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Create Offline Alert',
+              onPress: () => createOfflineAlert(payload),
+            },
+          ]
+        );
       }
     } else {
-      setErrorMessage(
-        response.error || 'Failed to submit emergency alert. Please verify your connection.'
-      );
+      // 2. Guest / Offline Mode
+      setIsSubmitting(false);
+      createOfflineAlert(payload);
     }
+  };
+
+  // Create offline local alert
+  const createOfflineAlert = (payload) => {
+    const localAlert = {
+      id: generateDraftId(),
+      emergencyType: payload.emergencyType,
+      details: payload.details || '',
+      contactDetails: payload.contactDetails || '',
+      location: payload.location,
+      senderName: contactName.trim() || 'Anonymous Responder',
+      status: 'Offline (Local Only)',
+      isOffline: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    setCreatedAlert(localAlert);
+    if (typeof onDraftCreated === 'function') {
+      onDraftCreated(localAlert);
+    }
+  };
+
+  // Start BLE Advertising
+  const handleStartBLEBroadcast = async () => {
+    if (!createdAlert) return;
+
+    setBleError(null);
+    setBleStatusText('Initializing BLE advertising...');
+
+    const result = await bluetoothService.startAdvertisingSOS(
+      createdAlert,
+      (ack) => {
+        // Callback invoked when receiver sends ACK
+        setBleAckInfo(ack);
+        setBleStatusText('Receiver acknowledgment confirmed over BLE!');
+        Alert.alert(
+          '🎉 Acknowledgment Received!',
+          `Nearby receiver (${ack.receiverId}) has confirmed receipt of your distress alert over Bluetooth.`,
+          [{ text: 'OK' }]
+        );
+      }
+    );
+
+    if (result.success) {
+      setIsAdvertising(true);
+      setBleStatusText('Broadcasting SOS beacon over Bluetooth (GATT Service Active)...');
+    } else {
+      setIsAdvertising(false);
+      setBleError(result.error);
+      setBleStatusText(null);
+    }
+  };
+
+  // Stop BLE Advertising
+  const handleStopBLEBroadcast = async () => {
+    await bluetoothService.stopAdvertisingSOS();
+    setIsAdvertising(false);
+    setBleStatusText('BLE broadcasting stopped.');
   };
 
   return (
@@ -166,18 +241,18 @@ export const SendSOSScreen = ({ navigation, route }) => {
           <View style={styles.header}>
             <Text style={styles.screenTitle}>Send Emergency SOS</Text>
             <Text style={styles.screenSubtitle}>
-              Broadcast emergency distress beacon to backend database
+              Broadcast emergency distress beacon over BLE & backend
             </Text>
           </View>
 
           {/* Guest Mode Warning Banner if not logged in */}
           {!isAuthenticated ? (
             <View style={styles.guestBanner}>
-              <Text style={styles.guestIcon}>⚠️</Text>
+              <Text style={styles.guestIcon}>ℹ️</Text>
               <View style={styles.guestTextContainer}>
-                <Text style={styles.guestTitle}>Guest Mode Active</Text>
+                <Text style={styles.guestTitle}>Guest / Offline Mode</Text>
                 <Text style={styles.guestMessage}>
-                  Please sign in to record alerts in the central backend.
+                  Alerts will be generated locally with unique IDs and can be broadcast over Bluetooth.
                 </Text>
               </View>
               <TouchableOpacity
@@ -197,22 +272,24 @@ export const SendSOSScreen = ({ navigation, route }) => {
             </View>
           ) : null}
 
-          {/* Success Result Card (After Backend 201 Response) */}
+          {/* Success / Alert Ready Card */}
           {createdAlert ? (
             <View style={[styles.successContainer, shadows.cardElevated]}>
               <View style={styles.successHeader}>
-                <Text style={styles.successBadge}>BACKEND RECORD CREATED (HTTP 201)</Text>
-                <Text style={styles.successTitle}>Alert Submitted Successfully</Text>
-              </View>
-
-              <View style={styles.alertNoticeBox}>
-                <Text style={styles.alertNoticeText}>
-                  🛡️ Confirmed: Your emergency alert has been securely stored in the RescueLink
-                  backend database. Real device-to-device BLE mesh relaying and official dispatch
-                  (911/112) await subsequent modules.
+                <Text
+                  style={[
+                    styles.successBadge,
+                    createdAlert.isOffline && styles.offlineBadge,
+                  ]}
+                >
+                  {createdAlert.isOffline
+                    ? 'OFFLINE LOCAL ALERT CREATED'
+                    : 'BACKEND RECORD CREATED (HTTP 201)'}
                 </Text>
+                <Text style={styles.successTitle}>Alert Ready for Broadcast</Text>
               </View>
 
+              {/* Alert Details Card */}
               <View style={styles.draftDetailsCard}>
                 <Text style={styles.draftIdText}>ALERT ID: {createdAlert.id}</Text>
                 <Text style={styles.draftRow}>
@@ -220,7 +297,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
                   <Text style={styles.statusPending}>{createdAlert.status}</Text>
                 </Text>
                 <Text style={styles.draftRow}>
-                  <Text style={styles.draftLabel}>Type: </Text>
+                  <Text style={styles.draftLabel}>Category: </Text>
                   {createdAlert.emergencyType}
                 </Text>
                 <Text style={styles.draftRow}>
@@ -241,10 +318,64 @@ export const SendSOSScreen = ({ navigation, route }) => {
                 ) : null}
               </View>
 
+              {/* BLE Broadcast Section */}
+              <View style={styles.bleSectionBox}>
+                <Text style={styles.bleSectionTitle}>BLUETOOTH LOW ENERGY (BLE) TRANSMISSION</Text>
+                <Text style={styles.bleSectionDesc}>
+                  Broadcast this alert to nearby RescueLink smartphones within 10-30 meters.
+                </Text>
+
+                {bleStatusText ? (
+                  <View style={styles.bleStatusBox}>
+                    <ActivityIndicator size="small" color={colors.info} style={{ marginRight: 6 }} />
+                    <Text style={styles.bleStatusText}>{bleStatusText}</Text>
+                  </View>
+                ) : null}
+
+                {bleError ? (
+                  <View style={styles.bleErrorBox}>
+                    <Text style={styles.bleErrorText}>⚠️ {bleError}</Text>
+                  </View>
+                ) : null}
+
+                {bleAckInfo ? (
+                  <View style={styles.ackCard}>
+                    <Text style={styles.ackBadge}>GENUINE BLE ACK CONFIRMED</Text>
+                    <Text style={styles.ackTitle}>Receiver Confirmed Receipt</Text>
+                    <Text style={styles.ackText}>
+                      Receiver ID: {bleAckInfo.receiverId}
+                    </Text>
+                    <Text style={styles.ackText}>
+                      Confirmed At: {formatTimestamp(bleAckInfo.receivedAt)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.bleActionButtons}>
+                  {!isAdvertising ? (
+                    <PrimaryButton
+                      title="Broadcast via Bluetooth"
+                      onPress={handleStartBLEBroadcast}
+                      variant="danger"
+                      icon="📡"
+                    />
+                  ) : (
+                    <PrimaryButton
+                      title="Stop BLE Broadcast"
+                      onPress={handleStopBLEBroadcast}
+                      variant="secondary"
+                      icon="⏹️"
+                    />
+                  )}
+                </View>
+              </View>
+
+              {/* Navigation Actions */}
               <View style={styles.successActions}>
                 <PrimaryButton
                   title="View in Emergency History"
                   onPress={() => {
+                    bluetoothService.stopAdvertisingSOS();
                     setCreatedAlert(null);
                     navigation.navigate('EmergencyHistory');
                   }}
@@ -252,18 +383,13 @@ export const SendSOSScreen = ({ navigation, route }) => {
                   icon="📋"
                 />
                 <PrimaryButton
-                  title="Create Another Alert"
+                  title="Compose Another Alert"
                   onPress={() => {
+                    bluetoothService.stopAdvertisingSOS();
                     setCreatedAlert(null);
                     setDetails('');
-                  }}
-                  variant="secondary"
-                />
-                <PrimaryButton
-                  title="Back to Dashboard"
-                  onPress={() => {
-                    setCreatedAlert(null);
-                    navigation.navigate('Home');
+                    setBleAckInfo(null);
+                    setIsAdvertising(false);
                   }}
                   variant="outline"
                 />
@@ -373,7 +499,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
                 <View style={styles.reviewItem}>
                   <Text style={styles.reviewLabel}>Sender:</Text>
                   <Text style={styles.reviewValue}>
-                    {isAuthenticated ? user.name : 'Guest User'}
+                    {contactName.trim() || (isAuthenticated ? user.name : 'Anonymous')}
                   </Text>
                 </View>
               </View>
@@ -381,7 +507,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
               {/* Action Buttons */}
               <View style={styles.actionContainer}>
                 <PrimaryButton
-                  title={isSubmitting ? 'Submitting SOS...' : 'Send Emergency SOS'}
+                  title={isSubmitting ? 'Creating SOS...' : 'Create SOS Alert'}
                   onPress={handleReviewAndSubmit}
                   variant="danger"
                   loading={isSubmitting}
@@ -429,12 +555,12 @@ const styles = StyleSheet.create({
   guestBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.warningLight,
+    backgroundColor: colors.infoLight,
     padding: spacing.md,
     borderRadius: borderRadius.md,
     marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: colors.warningBorder,
+    borderColor: colors.infoBorder,
   },
   guestIcon: {
     fontSize: 20,
@@ -446,14 +572,14 @@ const styles = StyleSheet.create({
   guestTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.warningDark,
+    color: colors.infoDark,
   },
   guestMessage: {
     fontSize: 11,
-    color: colors.warningDark,
+    color: colors.infoDark,
   },
   guestLoginBtn: {
-    backgroundColor: colors.warningDark,
+    backgroundColor: colors.info,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,
@@ -628,24 +754,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.successBorder,
   },
+  offlineBadge: {
+    backgroundColor: colors.warningLight,
+    color: colors.warningDark,
+    borderColor: colors.warningBorder,
+  },
   successTitle: {
     fontSize: 20,
     fontWeight: '800',
     color: colors.textPrimary,
     textAlign: 'center',
-  },
-  alertNoticeBox: {
-    backgroundColor: colors.infoLight,
-    padding: spacing.md,
-    borderRadius: borderRadius.md,
-    marginVertical: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.infoBorder,
-  },
-  alertNoticeText: {
-    fontSize: 12,
-    color: colors.infoDark,
-    lineHeight: 17,
   },
   draftDetailsCard: {
     backgroundColor: colors.surfaceSubtle,
@@ -671,6 +789,83 @@ const styles = StyleSheet.create({
   statusPending: {
     fontWeight: '800',
     color: colors.warningDark,
+  },
+  bleSectionBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginVertical: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
+  },
+  bleSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
+  bleSectionDesc: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 16,
+    marginBottom: spacing.sm,
+  },
+  bleStatusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.infoLight,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.infoBorder,
+  },
+  bleStatusText: {
+    fontSize: 12,
+    color: colors.infoDark,
+    fontWeight: '600',
+    flex: 1,
+  },
+  bleErrorBox: {
+    backgroundColor: colors.primaryLight,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+  },
+  bleErrorText: {
+    fontSize: 12,
+    color: colors.primaryDark,
+  },
+  ackCard: {
+    backgroundColor: colors.successLight,
+    borderRadius: borderRadius.sm,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+  },
+  ackBadge: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.successDark,
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
+  ackTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.successDark,
+    marginBottom: 4,
+  },
+  ackText: {
+    fontSize: 11,
+    color: colors.successDark,
+  },
+  bleActionButtons: {
+    marginTop: spacing.xs,
   },
   successActions: {
     marginTop: spacing.md,
