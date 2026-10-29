@@ -11,7 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
-import { AlertRepository, ReceiptRepository } from '../database';
+import { AlertRepository, ReceiptRepository, SyncQueueRepository } from '../database';
 import { StatusCard } from '../components/StatusCard';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -187,6 +187,26 @@ export const NearbyDevicesScreen = ({ navigation }) => {
 
             if (!saveRes.isNew) {
               alert.isDuplicate = true;
+            }
+
+            // Enqueue into offline outbox for cloud relay when connectivity is available
+            try {
+              await SyncQueueRepository.enqueue({
+                alertId: alert.alertId,
+                operation: 'CREATE',
+                payload: {
+                  alertId: alert.alertId,
+                  emergencyType: alert.emergencyType,
+                  details: alert.details,
+                  latitude: alert.latitude,
+                  longitude: alert.longitude,
+                  source: 'bluetooth',
+                  originalSenderName: alert.senderName,
+                  createdAt: alert.createdAt,
+                },
+              });
+            } catch (qErr) {
+              console.warn('[NearbyDevicesScreen] SQLite queue relay warning:', qErr.message);
             }
           } catch (dbErr) {
             console.warn('[NearbyDevicesScreen] SQLite save alert warning:', dbErr.message);

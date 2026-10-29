@@ -41,23 +41,28 @@ app.use(notFoundHandler);
 // Central error handler
 app.use(errorHandler);
 
-// Start server
-const PORT = config.port;
-const server = app.listen(PORT, () => {
-  console.log('====================================================');
-  console.log(` RescueLink Emergency Backend Server Running`);
-  console.log(` Port:        http://localhost:${PORT}`);
-  console.log(` Health:      http://localhost:${PORT}/api/health`);
-  console.log(` Environment: ${config.nodeEnv}`);
-  console.log('====================================================');
-});
+// Start server if executed directly
+let server = null;
+if (require.main === module) {
+  const PORT = config.port;
+  server = app.listen(PORT, () => {
+    console.log('====================================================');
+    console.log(` RescueLink Emergency Backend Server Running`);
+    console.log(` Port:        http://localhost:${PORT}`);
+    console.log(` Health:      http://localhost:${PORT}/api/health`);
+    console.log(` Environment: ${config.nodeEnv}`);
+    console.log('====================================================');
+  });
+}
 
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-  });
+  if (server) {
+    server.close(() => {
+      console.log('HTTP server closed');
+    });
+  }
 });
 
 module.exports = app;

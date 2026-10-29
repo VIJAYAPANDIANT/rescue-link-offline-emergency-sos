@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "node ../tests/run-all-tests.mjs"
   },
   "dependencies": {
     "@react-native-community/netinfo": "11.4.1",

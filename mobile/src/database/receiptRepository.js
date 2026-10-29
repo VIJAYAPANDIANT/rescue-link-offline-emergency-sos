@@ -25,11 +25,12 @@ export class ReceiptRepository {
     const db = await getDatabase();
     const receivedAt = new Date().toISOString();
     const metadataStr = typeof metadata === 'object' ? JSON.stringify(metadata) : metadata || null;
+    let insertResult = null;
 
     // Execute within a transaction to ensure receipt recording and alert ack update succeed together
     const executeTx = async () => {
       // 1. Insert message receipt
-      await db.runAsync(
+      insertResult = await db.runAsync(
         `INSERT INTO message_receipts (
           alertId,
           receiptType,
@@ -56,6 +57,7 @@ export class ReceiptRepository {
     }
 
     return {
+      id: insertResult?.lastInsertRowId,
       alertId,
       receiptType,
       receivedAt,

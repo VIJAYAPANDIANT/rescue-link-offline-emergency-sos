@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,8 +6,13 @@ import {
   ScrollView,
   SafeAreaView,
   Platform,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { apiClient } from '../services/api/apiClient';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EmptyState } from '../components/EmptyState';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
@@ -15,6 +20,46 @@ import { formatTimestamp } from '../utils/helpers';
 
 export const ProfileScreen = ({ navigation }) => {
   const { user, token, isAuthenticated, logout } = useAuth();
+  const [serverUrlInput, setServerUrlInput] = useState(apiClient.getBaseUrl());
+  const [isTestingGateway, setIsTestingGateway] = useState(false);
+  const [gatewayStatus, setGatewayStatus] = useState(null);
+
+  const handleTestGateway = async () => {
+    setIsTestingGateway(true);
+    setGatewayStatus(null);
+    try {
+      apiClient.setBaseUrl(serverUrlInput);
+      const res = await apiClient.checkHealth();
+      if (res.success) {
+        setGatewayStatus({
+          success: true,
+          message: `Reachable! ${res.data?.message || 'Server is online.'}`,
+        });
+      } else {
+        setGatewayStatus({
+          success: false,
+          message: res.error || 'Server unreachable at this address.',
+        });
+      }
+    } catch (err) {
+      setGatewayStatus({
+        success: false,
+        message: err.message || 'Connection failed.',
+      });
+    } finally {
+      setIsTestingGateway(false);
+    }
+  };
+
+  const handleResetGateway = () => {
+    apiClient.resetBaseUrl();
+    const defaultUrl = apiClient.getBaseUrl();
+    setServerUrlInput(defaultUrl);
+    setGatewayStatus({
+      success: true,
+      message: `Reset to default: ${defaultUrl}`,
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -116,6 +161,85 @@ export const ProfileScreen = ({ navigation }) => {
             />
           </View>
         )}
+
+        {/* Server Gateway & Network Settings */}
+        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
+          <Text style={styles.cardHeaderTitle}>🌐 Server Gateway Configuration</Text>
+          <Text style={styles.cardHeaderCaption}>
+            Configure the Express backend API address for Android emulators, physical devices, or LAN testing.
+          </Text>
+
+          <Text style={styles.inputLabel}>Backend API Base URL:</Text>
+          <TextInput
+            style={styles.gatewayInput}
+            value={serverUrlInput}
+            onChangeText={setServerUrlInput}
+            placeholder="http://192.168.1.X:5000/api"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <View style={styles.gatewayButtonRow}>
+            <TouchableOpacity
+              style={[styles.gatewayTestBtn, isTestingGateway && styles.btnDisabled]}
+              onPress={handleTestGateway}
+              disabled={isTestingGateway}
+              activeOpacity={0.8}
+            >
+              {isTestingGateway ? (
+                <ActivityIndicator size="small" color={colors.textInverse} />
+              ) : (
+                <Text style={styles.gatewayTestBtnText}>Test Connection</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.gatewayResetBtn}
+              onPress={handleResetGateway}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gatewayResetBtnText}>Reset Default</Text>
+            </TouchableOpacity>
+          </View>
+
+          {gatewayStatus && (
+            <View
+              style={[
+                styles.gatewayStatusBox,
+                gatewayStatus.success ? styles.statusSuccess : styles.statusError,
+              ]}
+            >
+              <Text style={styles.gatewayStatusText}>
+                {gatewayStatus.success ? '✅ ' : '⚠️ '}
+                {gatewayStatus.message}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Security & Protocol Safeguards */}
+        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
+          <Text style={styles.cardHeaderTitle}>🛡️ Security & Privacy Safeguards</Text>
+          <View style={styles.securityItem}>
+            <Text style={styles.securityBullet}>•</Text>
+            <Text style={styles.securityText}>
+              <Text style={{ fontWeight: '700' }}>Credential Isolation:</Text> Passwords, bcrypt hashes, and JWT tokens are strictly stripped and never transmitted over Bluetooth Low Energy.
+            </Text>
+          </View>
+          <View style={styles.securityItem}>
+            <Text style={styles.securityBullet}>•</Text>
+            <Text style={styles.securityText}>
+              <Text style={{ fontWeight: '700' }}>Relay Integrity:</Text> Peer distress alerts relayed via Bluetooth are tagged as <Text style={{ fontStyle: 'italic' }}>bluetooth_relay</Text>, recording the authenticated relaying node without forging sender identity.
+            </Text>
+          </View>
+          <View style={styles.securityItem}>
+            <Text style={styles.securityBullet}>•</Text>
+            <Text style={styles.securityText}>
+              <Text style={{ fontWeight: '700' }}>Payload Boundaries:</Text> BLE packets are validated against a 512-byte MTU limit to prevent buffer overruns and packet fragmentation.
+            </Text>
+          </View>
+        </View>
 
         <View style={styles.actionContainer}>
           <PrimaryButton
@@ -259,6 +383,107 @@ const styles = StyleSheet.create({
   },
   actionContainer: {
     marginTop: spacing.lg,
+  },
+  cardHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  cardHeaderCaption: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 16,
+    marginBottom: spacing.md,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  gatewayInput: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: 13,
+    color: colors.textPrimary,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginBottom: spacing.md,
+  },
+  gatewayButtonRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  gatewayTestBtn: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gatewayTestBtnText: {
+    color: colors.textInverse,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  gatewayResetBtn: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gatewayResetBtnText: {
+    color: colors.textSecondary,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  gatewayStatusBox: {
+    marginTop: spacing.md,
+    padding: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+  },
+  statusSuccess: {
+    backgroundColor: colors.successLight,
+    borderColor: colors.successBorder,
+  },
+  statusError: {
+    backgroundColor: colors.warningLight,
+    borderColor: colors.warningBorder,
+  },
+  gatewayStatusText: {
+    fontSize: 12,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  securityItem: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+    paddingRight: spacing.sm,
+  },
+  securityBullet: {
+    fontSize: 14,
+    color: colors.primary,
+    marginRight: 6,
+    lineHeight: 18,
+  },
+  securityText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17,
+    flex: 1,
   },
 });
 

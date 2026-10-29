@@ -6,7 +6,7 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–6 Completed)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–7 Completed: Production-Ready Prototype)**
 
 ---
 
@@ -42,7 +42,8 @@ RescueLink bridges this communication gap through a **device-to-device Bluetooth
 | **Connectivity & NetInfo** | `@react-native-community/netinfo` (v11.4.1) | Live network monitoring & internet reachability verification | ✅ Completed (Step 6) |
 | **Cloud Synchronization** | Opportunistic Sync Engine + Express REST | Outbox batch processing, exponential backoff, & BLE relay attribution | ✅ Completed (Step 6) |
 | **Location & Maps** | GPS + Google Maps API | Real-time coordinate lock & spatial visualization | ✅ Completed (Step 1, optional) |
-| **Mesh & Cloud Routing** | Multi-hop Mesh Gossip + Responder Feed | Multi-peer relay routing & central incident map | ⏳ Planned (Step 7) |
+| **System Integration** | End-to-End Relay + Security Audit + 25 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
+| **Multi-hop Mesh Swarm** | Mesh Gossip Protocol + Live GIS Map | Multi-hop flood routing across 3+ peers & incident map | ⏳ Planned (Next Phase) |
 
 ---
 
@@ -137,6 +138,55 @@ c:\Offline Emergency SOS/
 ├── .gitignore
 └── README.md
 ```
+
+---
+
+## 🏛️ System Architecture & Data Flow
+
+```mermaid
+graph TD
+    subgraph DeviceA ["Sender Device (Offline)"]
+        UserA["Responder / Civilian"] --> SOS["Send SOS Screen"]
+        SOS --> SQLiteA[("SQLite Database<br/>(WAL Journal Mode)")]
+        SQLiteA --> OutboxA["Sync Queue (Outbox)"]
+        SOS --> GATTServer["BLE Peripheral GATT Server<br/>(Service UUID: e0a90001-...)"]
+        GATTServer --> Adv["BLE Advertising Beacon"]
+    end
+
+    subgraph BLEMesh ["Device-to-Device BLE Signaling (MTU 512)"]
+        Adv -. "BLE Scan Discovery" .-> Scan["Nearby Devices Scanner"]
+        Scan -. "GATT Connect & Read" .-> ReadChar["SOS Alert Characteristic<br/>(UUID: e0a90002-...)"]
+        WriteACK["GATT Write Acknowledgment<br/>(UUID: e0a90003-...)"] -. "BLE Write with Response" .-> ConfACK["Confirmed ACK"]
+    end
+
+    subgraph DeviceB ["Receiver / Relay Device"]
+        ReadChar --> SQLiteB[("SQLite Database<br/>(alerts: source='bluetooth')")]
+        SQLiteB --> OutboxB["Sync Queue (Outbox)<br/>(Relay Operation)"]
+        WriteACK --> ReceiptsB[("Receipts Ledger<br/>(BLE_ACK_SENT)")]
+        ConfACK --> ReceiptsA[("Sender Receipts<br/>(BLE_ACK_RECEIVED)")]
+    end
+
+    subgraph CloudSync ["Opportunistic Cloud Synchronization"]
+        OutboxB --> NetCheck{"Network & Reachability<br/>(NetInfo + Health Ping)"}
+        NetCheck -- Online --> SyncEngine["Sync Service<br/>(Exponential Backoff)"]
+        SyncEngine --> POSTSync["POST /api/alerts/sync<br/>(Bearer JWT Protected)"]
+        POSTSync --> Backend["Express.js Server"]
+        Backend --> AlertStore[("Central Alert Storage<br/>(alerts.json / Atomic Mutex)")]
+    end
+```
+
+### State & Data Consistency Model
+RescueLink strictly maintains distinct, non-interchangeable states across storage and transmission layers:
+- **Locally Saved**: Stored securely in SQLite WAL ledger.
+- **BLE Broadcast Active**: GATT server hosting beacon (`isAdvertising: true`).
+- **SOS Received by Peer**: Stored in receiver's SQLite with `source: 'bluetooth'` and `deliveryStatus: 'received'`.
+- **Peer Acknowledged**: Confirmed via GATT write receipt (`ackStatus: 'acknowledged'`).
+- **Pending Cloud Sync**: Enqueued in `sync_queue` outbox (`syncStatus: 'pending_sync'`).
+- **Cloud Synced**: Upload confirmed by backend (`syncStatus: 'synced'`).
+- **Failed / Retrying**: Rescheduled via exponential backoff (`sync_queue.status: 'failed'`).
+
+> [!NOTE]
+> RescueLink **never** marks an alert as "delivered to emergency services" based solely on local storage or BLE transfer. Verified external dispatch integration is required before public safety dispatch can be asserted.
 
 ---
 
@@ -306,47 +356,88 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
    cd mobile
    ```
 
-2. Install dependencies:
+2. Configure environment variables (copy template):
+   ```bash
+   cp .env.example .env
+   ```
+   - **Android Emulator**: `EXPO_PUBLIC_API_URL=http://10.0.2.2:5000/api`
+   - **Physical Android Device (on same Wi-Fi)**: `EXPO_PUBLIC_API_URL=http://<YOUR_COMPUTER_LAN_IP>:5000/api`
+   - **iOS Simulator / Web**: `EXPO_PUBLIC_API_URL=http://localhost:5000/api`
+   *(Alternatively, configure the URL at runtime in the app under Profile -> Server Gateway Configuration).*
+
+3. Install dependencies:
    ```bash
    npm install
    ```
 
-3. Launch Metro Bundler:
+4. Prebuild and launch on Android with native module support:
    ```bash
-   npx expo start
-   ```
-
-4. Run on an Android device or emulator with native module support:
-   ```bash
+   npx expo prebuild
    npx expo run:android
    ```
 
 ---
 
+## 📱 Two-Device Physical Manual Testing Guide
+
+For evaluating real peer-to-peer BLE transmission, Bluetooth permissions, and offline SQLite persistence across **two compatible Android devices (Device A = Sender, Device B = Receiver)**:
+
+| Scenario | Device Action | Expected Result | Verification Layer |
+|---|---|---|---|
+| **1. Application Launch** | Open RescueLink on Device A and Device B. | Home dashboard loads, SQLite initializes, BLE readiness cards report status. | **Physical Device** |
+| **2. BLE Permissions & Readiness** | Tap "Broadcast via Bluetooth" or "Scan for SOS". | Runtime permission prompt appears (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `ACCESS_FINE_LOCATION`). Radio reports "BLE Ready". | **Physical Device** |
+| **3. Device Discovery & RSSI** | Device A activates BLE Broadcast; Device B starts Scan in Nearby Devices. | Device B discovers Device A's beacon with genuine RSSI signal strength (e.g. `-58 dBm`). | **Physical Device** |
+| **4. Send & Receive Test SOS** | Device A submits "Test / Drill" SOS; Device B connects & reads alert. | Device B displays alert category, coordinates, and details offline without cellular/Wi-Fi. | **Physical Device** |
+| **5. BLE Acknowledgment** | Device B taps "Transmit Acknowledgment" over BLE. | Device B writes `SOS_ACK`; Device A receives confirmed ACK card and updates SQLite `ackStatus: 'acknowledged'`. | **Physical Device** |
+| **6. Pure Offline Operation** | Enable Airplane Mode on both devices (keep Bluetooth enabled). Compose SOS. | SOS is saved locally in SQLite; outbox queues item; app never crashes or hangs. | **Physical & Automated** |
+| **7. Persistence Check** | Force-close and reopen RescueLink on both devices. Navigate to History. | All alerts, receipts, and pending sync states persist intact from SQLite WAL ledger. | **Physical & Automated** |
+| **8. Cloud Synchronization** | Disable Airplane Mode and restore internet connectivity. | App detects reconnect via NetInfo; outbox automatically flushes alerts to backend. | **Physical & Automated** |
+| **9. Replay / Duplicate Prevention** | Rebroadcast the exact same alert from Device A to Device B. | Device B flags `alert.isDuplicate = true`; SQLite updates without duplicate row insertion. | **Physical & Automated** |
+| **10. Permission Denial Resilience** | Revoke Bluetooth permission in Android settings; attempt scan. | App catches denial gracefully, displays warning banner, and guides user to settings. | **Physical & Automated** |
+
+---
+
 ## 🧪 Automated Verification & Test Results
 
-The codebase includes automated tests across all subsystems:
+The project includes an end-to-end automated integration test suite covering all 5 core modules:
 
-| Test Suite | Coverage | Status |
+```bash
+# Run complete test suite from repository root:
+node tests/run-all-tests.mjs
+
+# Or from the server directory:
+cd server && npm test
+```
+
+### Verified Test Suite (25/25 Passing)
+
+| Test Module | Test Scenario | Result |
 |---|---|---|
-| **Babel Compilation** | Verified syntax across all screens, database repositories, and BLE services | **PASS** (10/10 files) |
-| **Expo Config** | Validated plugins (`expo-sqlite`, `react-native-ble-plx`) & Android permissions | **PASS** |
-| **Backend REST APIs** | Tested `/api/health`, `/api/auth/register`, `/api/auth/login`, `/api/alerts` (GET/POST) | **PASS** |
-| **BLE Protocol** | Verified Base64 serialization, deserialization, credential scrubbing, & 512 MTU limit | **PASS** |
-| **SQLite Migrations** | Tested Migration v1 execution, index creation, and idempotency | **PASS** |
-| **Multi-Source Persistence** | Verified saving `local`, `bluetooth`, and `server` alerts into SQLite | **PASS** |
-| **Duplicate Prevention** | Verified re-saving existing `alertId` updates details without duplicate row creation | **PASS** |
-| **Atomic Receipts & Ack** | Verified recording message receipt atomically updates `alerts.ackStatus` to `acknowledged` | **PASS** |
-| **Offline Outbox Queue** | Tested enqueuing operations, error tracking (`retryCount`), and item removal | **PASS** |
-| **Outbox Migration v2** | Added `lastAttemptAt`, `nextRetryAt`, retry index, and unique deduplication index | **PASS** |
-| **Outbox Deduplication** | Verified duplicate `enqueue` calls update existing row without adding duplicate items | **PASS** |
-| **Backoff Scheduling** | Verified retry backoff timers exclude unready items from eligible batches | **PASS** |
-| **SyncService Algorithm** | Verified exponential backoff calculation bounds (5s base, 300s max cap) and concurrency locks | **PASS** |
-| **Backend `POST /api/alerts/sync`** | Verified authenticated batch sync, idempotency (`already_synced`), and validation bounds | **PASS** |
-| **BLE Relay Attribution** | Verified relayed BLE alerts record `source: bluetooth_relay`, relay node user ID, and original sender | **PASS** |
-| **Partial Failure Resilience** | Verified per-item validation errors flag individual failed alerts without aborting batch | **PASS** |
-| **End-to-End Sync Flow** | Verified successful sync deletes outbox item and updates SQLite alert to `'synced'` | **PASS** |
-| **Auth Expiry Safety** | Verified 401 Unauthorized marks outbox item failed without deleting or corrupting local records | **PASS** |
+| **Module 1: Authentication & JWT** | Registration input validation (name length, email format, password length) | **PASS** |
+| | Register creates user with bcrypt salt rounds and returns token without passwordHash | **PASS** |
+| | Rejects duplicate email registration with 409 Conflict | **PASS** |
+| | Login authenticates valid credentials and returns new JWT | **PASS** |
+| | Login returns generic 401 on invalid credentials to prevent account enumeration | **PASS** |
+| | Protected routes reject missing token, bad format, and expired token | **PASS** |
+| **Module 2: Alert REST API & Validation** | Creates alert with supported categories and `Test / Drill` demo mode | **PASS** |
+| | Rejects invalid emergency category, out-of-bounds coordinates, and incomplete coordinates | **PASS** |
+| | Cross-user isolation conceals unowned alerts with 404 (anti-enumeration) | **PASS** |
+| | Direct status transition to "Acknowledged" rejected for senders (reserved for receivers) | **PASS** |
+| | Owner successfully marks alert as Resolved | **PASS** |
+| **Module 3: BLE Protocol & Sanitization** | Serializes SOS_ALERT to Base64 and enforces 512-byte MTU limit [Hardware Mocked] | **PASS** |
+| | Strictly strips sensitive credentials (JWT, passwords, hashes) on serialize/deserialize | **PASS** |
+| | Safely handles malformed JSON and corrupted Base64 strings without throwing errors | **PASS** |
+| **Module 4: SQLite Offline Persistence** | Migrations v1 and v2 apply idempotently and create all tables and indexes | **PASS** |
+| | Persists alert with distinct delivery, ack, and sync states | **PASS** |
+| | Duplicate prevention updates existing alert without creating duplicate rows | **PASS** |
+| | Recording message receipt atomically updates `alerts.ackStatus` to "acknowledged" | **PASS** |
+| **Module 5: Outbox & Cloud Sync** | Enqueue deduplication updates existing item instead of creating duplicate | **PASS** |
+| | Exponential backoff calculation respects base delay (5s) and max cap (300s) | **PASS** |
+| | Batch sync to backend records BLE relay attribution without impersonating peer | **PASS** |
+| | Backend sync is idempotent (re-upload returns `already_synced` without duplication) | **PASS** |
+| | Partial batch failures reject bad items without failing valid ones | **PASS** |
+| | End-to-end sync flushes outbox, deletes queue row, and marks SQLite alert "synced" | **PASS** |
+| | Authentication expiration (401) preserves local outbox items without deleting | **PASS** |
 
 ---
 
@@ -394,11 +485,18 @@ The codebase includes automated tests across all subsystems:
   - Strict attribution separation: direct author (`source: 'local'`) vs. peer BLE relay (`source: 'bluetooth_relay'`, `relayedBy: req.user.id`, preserving original peer display name)
   - Client synchronization engine (`syncService.js`) with concurrency lock, exponential backoff with jitter (5s base, 5m cap), and non-destructive 401 handling
   - UI integrations: Dashboard `Cloud Synchronization` card with live outbox metrics; Emergency History with "Sync Now" action, sync status bar, and distinct Delivery / Acknowledgment / Cloud Sync badges
-- [ ] **Step 7: Multi-hop BLE Mesh Routing & Incident Operations Map**
-  - Multi-hop mesh gossip relaying across peer swarms
-  - Real-time GIS distress map and first responder incident feed
-  - Opportunistic sync engine processing `sync_queue` outbox
-  - Real-time incident mapping & first responder dispatch interface
+- [x] **Step 7: Final Integration, Comprehensive Testing, Security Review & Project Readiness** (Completed)
+  - End-to-end integration: Local SOS -> SQLite WAL -> BLE broadcast/read -> BLE ACK -> Outbox -> Cloud relay sync
+  - Safe Demo / Drill Mode category added (`Test / Drill`) for non-emergency testing
+  - Dynamic Gateway URL configuration in Profile with connection test and persistent fallback
+  - Expanded technical audit modal in Emergency History for inspecting raw UUIDs, receipts, and state transitions
+  - Complete security audit: credential stripping, strict 512-byte MTU limit, sanitized errors, no secrets committed
+  - Unified automated test suite with 25 passing test scenarios (`npm test`)
+  - Two-device physical testing guide covering 10 manual validation scenarios
+- [ ] **Future Enhancements (Post-Prototype)**
+  - Multi-hop mesh flood routing across 3+ peers
+  - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
+  - Live GIS interactive distress feed for emergency operations command centers
 
 ---
 

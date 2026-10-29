@@ -54,6 +54,15 @@ export const EMERGENCY_TYPES = [
     color: '#475569',
     bgColor: '#F1F5F9',
   },
+  {
+    id: 'drill',
+    label: 'Test / Drill',
+    badgeText: 'Drill Mode',
+    description: 'Safe practice drill for testing offline beacons and device relays without alarm',
+    symbol: '🧪',
+    color: '#0284C7',
+    bgColor: '#E0F2FE',
+  },
 ];
 
 export const STATUS_STATES = {

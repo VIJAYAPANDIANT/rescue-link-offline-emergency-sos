@@ -14,7 +14,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
 import { syncService } from '../services/sync/syncService';
-import { AlertRepository, SyncQueueRepository } from '../database';
+import { AlertRepository, SyncQueueRepository, ReceiptRepository } from '../database';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
@@ -46,6 +46,7 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
   const [dbError, setDbError] = useState(null);
   const [serverNotice, setServerNotice] = useState(null);
   const [resolvingId, setResolvingId] = useState(null);
+  const [expandedAlertId, setExpandedAlertId] = useState(null);
 
   // Filters
   const [sourceFilter, setSourceFilter] = useState('ALL'); // 'ALL' | 'local' | 'bluetooth' | 'server'
@@ -540,6 +541,55 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                       </View>
                     </View>
 
+                    {/* Expandable Technical Details */}
+                    <TouchableOpacity
+                      style={styles.inspectToggleBtn}
+                      onPress={() => {
+                        const id = item.alertId || item.id;
+                        setExpandedAlertId(expandedAlertId === id ? null : id);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.inspectToggleText}>
+                        {expandedAlertId === (item.alertId || item.id)
+                          ? '▲ Hide Audit Metadata'
+                          : '▼ Inspect Audit Metadata & Receipts'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {expandedAlertId === (item.alertId || item.id) ? (
+                      <View style={styles.expandedDetailsBox}>
+                        <Text style={styles.expandedSectionTitle}>Technical Audit Details</Text>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Full UUID:</Text>
+                          <Text style={styles.auditValCode}>{item.alertId || item.id}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Source Mode:</Text>
+                          <Text style={styles.auditVal}>{item.source}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Delivery State:</Text>
+                          <Text style={styles.auditVal}>{item.deliveryStatus || 'Pending'}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Ack Confirmation:</Text>
+                          <Text style={styles.auditVal}>{item.ackStatus}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Cloud Sync Status:</Text>
+                          <Text style={styles.auditVal}>{item.syncStatus}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Last Updated:</Text>
+                          <Text style={styles.auditVal}>{formatTimestamp(item.updatedAt)}</Text>
+                        </View>
+                        <Text style={styles.auditNote}>
+                          🛡️ Authenticated locally in SQLite. Never claims dispatch without verified external PSAP connection.
+                        </Text>
+                      </View>
+                    ) : null}
+
                     {/* Action: Mark as Resolved */}
                     {isPending ? (
                       <View style={styles.actionRow}>
@@ -917,6 +967,60 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     marginTop: spacing.xs,
+  },
+  inspectToggleBtn: {
+    paddingVertical: spacing.xs,
+    alignItems: 'center',
+    marginVertical: 2,
+  },
+  inspectToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  expandedDetailsBox: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.sm,
+    padding: spacing.sm,
+    marginVertical: spacing.xs,
+    gap: 4,
+  },
+  expandedSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    marginBottom: 4,
+    letterSpacing: 0.5,
+  },
+  auditRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  auditKey: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  auditVal: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  auditValCode: {
+    fontSize: 9,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: colors.infoDark,
+    maxWidth: 210,
+  },
+  auditNote: {
+    fontSize: 10,
+    color: colors.textTertiary,
+    fontStyle: 'italic',
+    marginTop: 4,
+    lineHeight: 14,
   },
   resolveButton: {
     marginTop: 2,

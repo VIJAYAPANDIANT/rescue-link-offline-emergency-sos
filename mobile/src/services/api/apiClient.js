@@ -3,17 +3,57 @@
  * Communicates with the Node.js/Express backend for Health & Authentication.
  */
 
-// Default local backend URL (Use 10.0.2.2 for Android Emulator, localhost for iOS/Web)
-const DEFAULT_API_BASE_URL = 'http://localhost:5000/api';
+/**
+ * Determine default backend REST URL based on runtime environment.
+ * - Prioritizes EXPO_PUBLIC_API_URL environment variable if set.
+ * - Uses 10.0.2.2:5000/api for Android (standard host loopback).
+ * - Uses localhost:5000/api for iOS, Web, and desktop environments.
+ */
+export const resolveDefaultBaseUrl = () => {
+  if (typeof process !== 'undefined' && process.env && process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+
+  let os = 'unknown';
+  try {
+    // Dynamic resolution prevents syntax errors in pure Node test runtimes
+    const RN = require('react-native');
+    if (RN && RN.Platform) {
+      os = RN.Platform.OS;
+    }
+  } catch (e) {
+    os = 'node';
+  }
+
+  if (os === 'android') {
+    return 'http://10.0.2.2:5000/api';
+  }
+  return 'http://localhost:5000/api';
+};
+
+const DEFAULT_API_BASE_URL = resolveDefaultBaseUrl();
 
 class ApiClient {
   constructor(baseUrl = DEFAULT_API_BASE_URL) {
-    this.baseUrl = baseUrl;
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.token = null;
   }
 
+  getBaseUrl() {
+    return this.baseUrl;
+  }
+
   setBaseUrl(url) {
-    this.baseUrl = url;
+    if (!url || typeof url !== 'string') return;
+    let cleanUrl = url.trim().replace(/\/+$/, '');
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = `http://${cleanUrl}`;
+    }
+    this.baseUrl = cleanUrl;
+  }
+
+  resetBaseUrl() {
+    this.baseUrl = resolveDefaultBaseUrl();
   }
 
   setToken(token) {

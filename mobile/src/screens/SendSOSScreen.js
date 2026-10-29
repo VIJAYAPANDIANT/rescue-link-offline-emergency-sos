@@ -179,6 +179,9 @@ export const SendSOSScreen = ({ navigation, route }) => {
 
         // Update local SQLite record with confirmed server ID and synced status
         try {
+          if (localAlertId !== serverAlert.id) {
+            await AlertRepository.deleteAlert(localAlertId);
+          }
           await AlertRepository.saveOrUpdateAlert(syncedAlert);
         } catch (e) {
           console.warn('[SendSOSScreen] SQLite sync update warning:', e.message);

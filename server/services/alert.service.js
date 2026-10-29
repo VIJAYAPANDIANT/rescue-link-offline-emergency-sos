@@ -13,6 +13,7 @@ const ALLOWED_EMERGENCY_TYPES = [
   'Personal Safety',
   'Fire',
   'Other',
+  'Test / Drill',
 ];
 
 const ALLOWED_STATUSES = ['Pending', 'Acknowledged', 'Resolved'];
