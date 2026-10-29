@@ -56,6 +56,7 @@ c:\Offline Emergency SOS/
 │   ├── app.json                       # Expo configuration, permissions & plugins
 │   ├── babel.config.js                # Babel compilation config
 │   ├── package.json                   # Mobile dependencies & scripts
+│   ├── .env.example                   # Mobile environment template (EXPO_PUBLIC_API_URL)
 │   ├── assets/                        # Adaptive icons, splash, & metadata assets
 │   └── src/
 │       ├── components/                # Reusable UI component library
@@ -132,6 +133,9 @@ c:\Offline Emergency SOS/
 │   ├── .env.example                   # Environment variable template
 │   ├── package.json                   # Server dependencies & scripts
 │   └── server.js                      # Express application entry point
+├── tests/
+│   ├── run-all-tests.mjs              # Unified 25-scenario automated test runner
+│   └── run-step6-sync-tests.mjs       # Step 6 outbox & sync regression tests
 ├── docs/
 │   ├── architecture.md                # System design & multi-hop BLE mesh specs
 │   └── api-specs.md                   # REST API & BLE GATT protocol documentation
@@ -274,8 +278,9 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
 - **Quick Action Portals**: Navigation to Send SOS, Nearby Devices, and Emergency History.
 
 ### 2. Send SOS Screen (Sender Workflow)
-- **Category Picker**: Medical Emergency, Accident, Personal Safety, Fire, Other.
-- **Optional GPS Location**: User-consented coordinate acquisition.
+- **Category Picker**: Medical Emergency, Accident, Personal Safety, Fire, Other, and **Test / Drill**.
+- **Safe Drill Mode**: Clearly marked `Test / Drill` option allows realistic offline simulations without triggering false emergency dispatch.
+- **Optional GPS Location**: User-consented coordinate acquisition with privacy safeguards.
 - **Immediate SQLite Persistence**: Alert is saved locally in SQLite **before** any network attempt.
 - **Online vs. Offline Dispatch**:
   - If online, submits to `POST /api/alerts` and marks record `syncStatus = 'synced'`.
@@ -288,6 +293,7 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
 - **Real BLE Scanning**: Scans specifically for `RESCUELINK_SERVICE_UUID` with a 30-second timeout.
 - **Discovered Peer List**: Shows genuine discovered devices with live RSSI signal strength (no fake devices).
 - **Connect & Read SOS**: Establishes GATT connection, negotiates MTU 512, reads `SOS_ALERT_CHAR_UUID`, and persists alert into SQLite with `source = 'bluetooth'`.
+- **Automatic Outbox Relay**: Immediately enqueues received BLE alerts into the local `sync_queue` so the receiver's device acts as an opportunistic cloud relay.
 - **Duplicate Protection**: Automatically detects previously processed `alertId`s and badges duplicates.
 - **Transmit BLE Acknowledgment**: Writes `SOS_ACK` with confirmation back to the sender and records receipt in SQLite.
 
@@ -304,6 +310,13 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
   - **Cloud Sync**: 🟢 Synced, 🟡 Pending Sync, ⚪ Local Only
 - **Mark as Resolved**: Updates SQLite delivery status immediately and queues sync operation.
 - **Pull-to-Refresh**: Synchronizes with cloud backend if online, preserving local state.
+- **Inspect Audit Metadata**: Expandable technical view showing untruncated UUIDs, SQLite row IDs, last update timestamps, and receipt audit trails.
+
+### 5. Profile & Gateway Settings Screen
+- **Responder Session**: JWT authentication status, registration timestamp, and token metadata.
+- **Server Gateway Configuration**: Real-time configuration of the backend API URL (supports Android emulators `10.0.2.2`, physical devices over LAN IP, and localhost).
+- **Interactive Gateway Health Check**: One-tap "Test Connection" button calling `/api/health`.
+- **Security & Privacy Transparency**: Summarizes cryptographic token isolation, 512 MTU bounds, and peer relay attribution.
 
 ---
 
