@@ -101,9 +101,35 @@ const updateAlertStatus = async (req, res, next) => {
   }
 };
 
+/**
+ * Synchronize a batch of offline emergency alerts
+ * @route POST /api/alerts/sync
+ * @access Protected (JWT required)
+ */
+const syncAlerts = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    // Accept either { alerts: [...] } or direct array [...] or { items: [...] }
+    const alertItems = Array.isArray(req.body)
+      ? req.body
+      : req.body?.alerts || req.body?.items || [];
+
+    const result = await alertService.syncAlerts(userId, alertItems);
+
+    return res.status(200).json({
+      success: true,
+      message: `Sync completed: ${result.summary.synced} synced, ${result.summary.alreadySynced} already synced, ${result.summary.failed} failed.`,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAlert,
   getAlerts,
   getAlertById,
   updateAlertStatus,
+  syncAlerts,
 };

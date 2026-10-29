@@ -9,6 +9,7 @@ const {
   getAlerts,
   getAlertById,
   updateAlertStatus,
+  syncAlerts,
 } = require('../controllers/alert.controller');
 const authenticateToken = require('../middleware/auth.middleware');
 
@@ -18,6 +19,13 @@ const router = express.Router();
  * All alert routes require a valid JSON Web Token
  */
 router.use(authenticateToken);
+
+/**
+ * @route   POST /api/alerts/sync
+ * @desc    Synchronize a batch of offline emergency alerts
+ * @access  Protected
+ */
+router.post('/sync', syncAlerts);
 
 /**
  * @route   POST /api/alerts

@@ -380,7 +380,145 @@ Transmitted by the Central receiver back to the Sender peripheral via GATT Write
 
 ---
 
-## 5. Postman Testing Guide (12 Test Scenarios)
+## 5. Offline-to-Cloud Synchronization API (Step 6)
+
+### `POST /api/alerts/sync`
+Accepts a batch of offline emergency alerts from an authenticated client or relay node, deduplicates records against central storage using stable `alertId`, verifies attribution, and returns a per-item synchronization result summary.
+
+#### Request
+- **Method**: `POST`
+- **Headers**:
+  - `Content-Type: application/json`
+  - `Authorization: Bearer <JWT_TOKEN>`
+- **Body**:
+```json
+{
+  "alerts": [
+    {
+      "alertId": "5cf4d87d-ac72-4a5c-9fb2-dcf475287af9",
+      "emergencyType": "Medical Emergency",
+      "details": "Patient collapsed, offline alert created",
+      "contactDetails": "+1555123456",
+      "location": {
+        "latitude": 13.0827,
+        "longitude": 80.2707
+      },
+      "source": "local",
+      "createdAt": "2026-10-28T16:40:00.000Z",
+      "status": "Pending"
+    },
+    {
+      "alertId": "8fa1103e-bb32-47d0-a044-6338b394132c",
+      "emergencyType": "Accident",
+      "details": "Two vehicle collision on highway",
+      "contactDetails": "",
+      "location": null,
+      "source": "bluetooth",
+      "originalSenderName": "Motorist Dave",
+      "createdAt": "2026-10-28T16:42:15.000Z",
+      "status": "Pending"
+    }
+  ]
+}
+```
+
+#### Attribution and Ownership Model:
+- **Local Alerts** (`source: "local"`):
+  - Authored directly by the authenticated user.
+  - Backend stamps `senderId = req.user.id` and `senderName = req.user.name`.
+- **Bluetooth Relayed Alerts** (`source: "bluetooth"`):
+  - Originated from a nearby peer without cellular/cloud access.
+  - Backend sets `source = "bluetooth_relay"`.
+  - Backend preserves the original peer author's name (`senderName = originalSenderName || "Peer via BLE"`).
+  - Backend stamps relay attribution: `relayedBy = req.user.id` and `relayedByName = req.user.name`.
+  - Does NOT falsely impersonate the peer as the account owner.
+
+#### Idempotency:
+- If an alert with the same `alertId` already exists in `alerts.json`, the backend does not duplicate the record.
+- If the incoming alert contains a newer status (e.g. `Resolved`), the server updates the status.
+- The item is reported with status `"already_synced"` so the client's outbox can safely mark the item complete.
+
+#### Success Response (`200 OK`)
+```json
+{
+  "success": true,
+  "message": "Sync completed: 1 synced, 1 already synced, 0 failed.",
+  "results": [
+    {
+      "alertId": "5cf4d87d-ac72-4a5c-9fb2-dcf475287af9",
+      "status": "synced",
+      "alert": {
+        "id": "5cf4d87d-ac72-4a5c-9fb2-dcf475287af9",
+        "senderId": "f97186f6-14af-42e6-b6b9-1b2c393acfe9",
+        "senderName": "Alex Rivera",
+        "emergencyType": "Medical Emergency",
+        "details": "Patient collapsed, offline alert created",
+        "contactDetails": "+1555123456",
+        "location": {
+          "latitude": 13.0827,
+          "longitude": 80.2707
+        },
+        "source": "local",
+        "status": "Pending",
+        "createdAt": "2026-10-28T16:40:00.000Z",
+        "updatedAt": "2026-10-28T16:45:00.000Z"
+      }
+    },
+    {
+      "alertId": "8fa1103e-bb32-47d0-a044-6338b394132c",
+      "status": "already_synced",
+      "alert": {
+        "id": "8fa1103e-bb32-47d0-a044-6338b394132c",
+        "senderId": null,
+        "senderName": "Motorist Dave",
+        "emergencyType": "Accident",
+        "source": "bluetooth_relay",
+        "relayedBy": "f97186f6-14af-42e6-b6b9-1b2c393acfe9",
+        "relayedByName": "Alex Rivera",
+        "status": "Pending",
+        "createdAt": "2026-10-28T16:42:15.000Z",
+        "updatedAt": "2026-10-28T16:45:00.000Z"
+      }
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "synced": 1,
+    "alreadySynced": 1,
+    "failed": 0
+  }
+}
+```
+
+#### Partial Failure Response Example
+If an item in the batch has invalid coordinates or an invalid emergency type, the invalid item receives `"status": "failed"` with an error explanation, while valid items in the same batch are successfully synced:
+```json
+{
+  "success": true,
+  "message": "Sync completed: 1 synced, 0 already synced, 1 failed.",
+  "results": [
+    {
+      "alertId": "invalid-coord-alert",
+      "status": "failed",
+      "error": "Coordinates out of bounds (-90 to 90, -180 to 180)."
+    },
+    {
+      "alertId": "valid-alert-id",
+      "status": "synced"
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "synced": 1,
+    "alreadySynced": 0,
+    "failed": 1
+  }
+}
+```
+
+---
+
+## 6. Postman Testing Guide (16 Test Scenarios)
 
 1. **Create Alert with Valid JWT**: `POST /api/alerts` with Bearer token and valid body → `201 Created`.
 2. **Each Supported Type**: Test `"Medical Emergency"`, `"Accident"`, `"Personal Safety"`, `"Fire"`, and `"Other"` → all return `201 Created`.
@@ -397,13 +535,19 @@ Transmitted by the Central receiver back to the Sender peripheral via GATT Write
 10. **Cross-User Access Check**: `GET /api/alerts/:id` using a different user's JWT → `404 Not Found` (`ALERT_NOT_FOUND`).
 11. **Cross-User Modify Check**: `PATCH /api/alerts/:id/status` using a different user's JWT → `404 Not Found` (`ALERT_NOT_FOUND`).
 12. **Disk Persistence Check**: Inspect `server/data/alerts.json` to verify atomic writes and state persistence across server restarts.
+13. **Sync Batch of Alerts (`POST /api/alerts/sync`)**: Send array of offline alerts with valid JWT → `200 OK` with per-alert `synced` status.
+14. **Sync Idempotency**: Resend the same batch with identical `alertId` values → `200 OK` with `already_synced` status; verify no duplicate entries in `alerts.json`.
+15. **Bluetooth Relay Attribution**: Send alert with `source: "bluetooth"` and `originalSenderName: "Dave"` → `200 OK`; verify record stores `source: "bluetooth_relay"`, `relayedBy: user.id`, and preserves `senderName: "Dave"`.
+16. **Per-Item Error Resilience**: Send batch with one invalid coordinate item and one valid item → `200 OK` with `summary: { synced: 1, failed: 1 }`.
 
 ---
 
-## 6. Planned Endpoints (Step 5+)
+## 7. Planned Endpoints (Future Steps)
 
 | Method | Endpoint | Description | Phase |
 |---|---|---|---|
-| `POST` | `/api/sync/offline-records` | Batch synchronization of SQLite offline alerts | Step 5 |
+| `POST` | `/api/sync/mesh-relays` | Multi-hop mesh routing & multi-peer gossip sync | Step 7 |
+| `GET` | `/api/responder/live-feed` | Real-time map distress feed for first responders | Step 7 |
+| `POST` | `/api/alerts/:id/ack` | Global multi-device acknowledgment propagation | Step 7 |
 | `POST` | `/api/sync/mesh-relays` | Multi-hop BLE relay ingestion | Step 5 |
 | `GET` | `/api/responder/live-feed` | Real-time map distress feed for first responders | Step 5 |

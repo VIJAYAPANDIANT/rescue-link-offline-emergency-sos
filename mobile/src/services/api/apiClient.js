@@ -356,6 +356,43 @@ class ApiClient {
       };
     }
   }
+
+  /**
+   * Synchronize a batch of offline emergency alerts with the backend.
+   * @param {Array<object>} alertsList
+   */
+  async syncAlerts(alertsList) {
+    try {
+      const response = await fetch(`${this.baseUrl}/alerts/sync`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ alerts: alertsList }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Synchronization failed.',
+          status: response.status,
+          code: data.error?.code,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        results: data.results || [],
+        summary: data.summary || { synced: 0, alreadySynced: 0, failed: 0, total: alertsList.length },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error during synchronization.',
+      };
+    }
+  }
 }
 
 export const apiClient = new ApiClient();

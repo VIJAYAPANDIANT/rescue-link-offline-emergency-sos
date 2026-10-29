@@ -6,7 +6,7 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–5 Completed)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–6 Completed)**
 
 ---
 
@@ -39,8 +39,10 @@ RescueLink bridges this communication gap through a **device-to-device Bluetooth
 | **BLE Central (Receiver)** | `react-native-ble-plx` | Scanning, GATT service discovery, SOS message reading | ✅ Completed (Step 4) |
 | **BLE Peripheral (Sender)** | `react-native-ble-peripheral` | Custom GATT server hosting & beacon advertising | ✅ Completed (Step 4) |
 | **Local Storage** | `expo-sqlite` (v15.1.4) | Offline WAL persistence, schema migrations, receipts & outbox | ✅ Completed (Step 5) |
+| **Connectivity & NetInfo** | `@react-native-community/netinfo` (v11.4.1) | Live network monitoring & internet reachability verification | ✅ Completed (Step 6) |
+| **Cloud Synchronization** | Opportunistic Sync Engine + Express REST | Outbox batch processing, exponential backoff, & BLE relay attribution | ✅ Completed (Step 6) |
 | **Location & Maps** | GPS + Google Maps API | Real-time coordinate lock & spatial visualization | ✅ Completed (Step 1, optional) |
-| **Cloud Synchronization** | Opportunistic Sync Engine + MongoDB | Outbox queue processing & responder dashboard | ⏳ Planned (Step 6) |
+| **Mesh & Cloud Routing** | Multi-hop Mesh Gossip + Responder Feed | Multi-peer relay routing & central incident map | ⏳ Planned (Step 7) |
 
 ---
 
@@ -76,12 +78,12 @@ c:\Offline Emergency SOS/
 │       │   └── index.js
 │       ├── context/
 │       │   └── AuthContext.js         # JWT auth state provider & AsyncStorage sync
-│       ├── database/                  # SQLite Persistence Subsystem (Step 5)
+│       ├── database/                  # SQLite Persistence Subsystem (Step 5 & 6)
 │       │   ├── database.js            # SQLite connection, PRAGMA WAL, & lifecycle
-│       │   ├── migrations.js          # Versioned schema migrations runner (v1)
+│       │   ├── migrations.js          # Versioned schema migrations runner (v1 & v2)
 │       │   ├── alertRepository.js     # SOS alert CRUD, upsert, and multi-source queries
 │       │   ├── receiptRepository.js   # Message delivery & ACK receipts with atomic transactions
-│       │   ├── syncQueueRepository.js # Offline outbox queue for pending server operations
+│       │   ├── syncQueueRepository.js # Offline outbox queue with deduplication & retry backoff
 │       │   └── index.js               # Central database export
 │       ├── services/                  # Business & hardware services
 │       │   ├── bluetooth/             # Bluetooth Low Energy Subsystem (Step 4)
@@ -94,10 +96,12 @@ c:\Offline Emergency SOS/
 │       │   │   └── bluetoothService.js# Unified Central & Peripheral coordinator
 │       │   ├── location/
 │       │   │   └── locationService.js # GPS coordinate provider & fallback
+│       │   ├── network/               # Network Connectivity Subsystem (Step 6)
+│       │   │   └── networkService.js  # Live NetInfo monitor & reachability checker
 │       │   ├── api/
-│       │   │   └── apiClient.js       # REST client connecting to Express server
-│       │   └── sync/
-│       │       └── syncService.js     # Opportunistic cloud sync blueprint
+│       │   │   └── apiClient.js       # REST client with syncAlerts batch ingestion
+│       │   └── sync/                  # Cloud Synchronization Engine (Step 6)
+│       │       └── syncService.js     # Opportunistic outbox sync & exponential backoff
 │       └── utils/
 │           ├── constants.js           # Emergency categories, status & disclaimers
 │           ├── theme.js               # Emergency color palette, spacing & typography
@@ -200,7 +204,8 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
    - `alertId`, `receiptType` (`'BLE_ACK_SENT'`, `'BLE_ACK_RECEIVED'`), `receivedAt`, `senderOrDeviceId`, `metadata`.
    - Transactional link: recording a receipt atomically updates `alerts.ackStatus = 'acknowledged'`.
 3. **`sync_queue`**: Offline outbox queue for operations created while offline.
-   - `alertId`, `operation` (`'CREATE'`, `'UPDATE_STATUS'`, `'RESOLVE'`), `payload`, `status` (`'pending'`, `'processing'`, `'failed'`), `retryCount`, `errorMessage`.
+   - `alertId`, `operation` (`'CREATE'`, `'UPDATE_STATUS'`, `'RESOLVE'`), `payload`, `status` (`'pending'`, `'processing'`, `'failed'`), `retryCount`, `lastAttemptAt`, `nextRetryAt`, `errorMessage`.
+   - **Migration v2**: Added exponential backoff retry scheduling timestamps (`lastAttemptAt`, `nextRetryAt`), index on `(status, nextRetryAt)`, and unique deduplication index on `(alertId, operation)` preventing duplicate queue items.
 
 ---
 
@@ -212,6 +217,7 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
   - **Responder Session**: JWT Authenticated or Guest Mode.
   - **Bluetooth Radio**: Real hardware state (BLE Ready Powered On / Disabled / Dev Build Required).
   - **SQLite Offline Storage**: Active WAL ledger with real-time stored record counts.
+  - **Cloud Synchronization**: Real-time outbox sync status with pending queue counter and auto-sync state.
   - **Network Connectivity**: Backend Online (HTTP 200) or Offline / Local Mode.
   - **GPS Location Sensor**: Real-time coordinate lock status.
   - **RescueLink Server**: Express backend health check.
@@ -235,13 +241,17 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
 - **Duplicate Protection**: Automatically detects previously processed `alertId`s and badges duplicates.
 - **Transmit BLE Acknowledgment**: Writes `SOS_ACK` with confirmation back to the sender and records receipt in SQLite.
 
-### 4. Emergency History Screen (Offline Ledger)
+### 4. Emergency History Screen (Offline Ledger & Cloud Sync Hub)
 - **Single Source of Truth**: Reads all records directly from SQLite for instant offline loading.
+- **Cloud Synchronization Hub**:
+  - **Sync Now Action**: Immediate manual synchronization trigger with in-flight spinner.
+  - **Sync Status Bar**: Shows pending outbox count, last sync timestamp, and network connectivity state.
 - **Multi-Filter Tabs**: Filter by Source (`All`, `Local`, `BLE Direct`, `Server Synced`) and Status (`All`, `Pending`, `Resolved`).
 - **Comprehensive Badges**:
-  - Source: 📱 Local Draft, 📡 BLE Direct, ☁️ Server Synced
-  - Ack: ✅ Ack Confirmed, ⏳ Unacknowledged
-  - Sync: 🟢 Synced, 🟡 Pending Sync
+  - **Source**: 📱 Local Draft, 📡 BLE Direct, ☁️ Server Synced
+  - **Delivery**: ⏳ Pending, ✉️ Transmitted, 🏁 Resolved
+  - **Acknowledgment**: ✅ Confirmed, ⏳ Unacknowledged
+  - **Cloud Sync**: 🟢 Synced, 🟡 Pending Sync, ⚪ Local Only
 - **Mark as Resolved**: Updates SQLite delivery status immediately and queues sync operation.
 - **Pull-to-Refresh**: Synchronizes with cloud backend if online, preserving local state.
 
@@ -328,6 +338,15 @@ The codebase includes automated tests across all subsystems:
 | **Duplicate Prevention** | Verified re-saving existing `alertId` updates details without duplicate row creation | **PASS** |
 | **Atomic Receipts & Ack** | Verified recording message receipt atomically updates `alerts.ackStatus` to `acknowledged` | **PASS** |
 | **Offline Outbox Queue** | Tested enqueuing operations, error tracking (`retryCount`), and item removal | **PASS** |
+| **Outbox Migration v2** | Added `lastAttemptAt`, `nextRetryAt`, retry index, and unique deduplication index | **PASS** |
+| **Outbox Deduplication** | Verified duplicate `enqueue` calls update existing row without adding duplicate items | **PASS** |
+| **Backoff Scheduling** | Verified retry backoff timers exclude unready items from eligible batches | **PASS** |
+| **SyncService Algorithm** | Verified exponential backoff calculation bounds (5s base, 300s max cap) and concurrency locks | **PASS** |
+| **Backend `POST /api/alerts/sync`** | Verified authenticated batch sync, idempotency (`already_synced`), and validation bounds | **PASS** |
+| **BLE Relay Attribution** | Verified relayed BLE alerts record `source: bluetooth_relay`, relay node user ID, and original sender | **PASS** |
+| **Partial Failure Resilience** | Verified per-item validation errors flag individual failed alerts without aborting batch | **PASS** |
+| **End-to-End Sync Flow** | Verified successful sync deletes outbox item and updates SQLite alert to `'synced'` | **PASS** |
+| **Auth Expiry Safety** | Verified 401 Unauthorized marks outbox item failed without deleting or corrupting local records | **PASS** |
 
 ---
 
@@ -367,8 +386,17 @@ The codebase includes automated tests across all subsystems:
   - Message receipts repository with atomic transactions updating alert `ackStatus`
   - Offline outbox queue (`sync_queue`) tracking operations (`CREATE`, `UPDATE_STATUS`, `RESOLVE`) without requiring live server
   - Emergency History screen reading directly from SQLite as single source of truth with source/status filtering, badges, and pull-to-refresh
-- [ ] **Step 6: Cloud Synchronization & First Responder Dashboard**
-  - MongoDB migration & cloud ingestion
+- [x] **Step 6: Reliable Offline-to-Cloud Synchronization** (Completed)
+  - Integrated `@react-native-community/netinfo` with live state detection, reachability verification, and automatic reconnect triggers
+  - Database Migration v2: added `lastAttemptAt`, `nextRetryAt`, retry index, and deduplication unique index on `(alertId, operation)`
+  - Outbox repository with idempotent `enqueue`, backoff scheduling, and sanitized error recording
+  - Dedicated backend endpoint `POST /api/alerts/sync` with per-item reporting (`synced`, `already_synced`, `failed`)
+  - Strict attribution separation: direct author (`source: 'local'`) vs. peer BLE relay (`source: 'bluetooth_relay'`, `relayedBy: req.user.id`, preserving original peer display name)
+  - Client synchronization engine (`syncService.js`) with concurrency lock, exponential backoff with jitter (5s base, 5m cap), and non-destructive 401 handling
+  - UI integrations: Dashboard `Cloud Synchronization` card with live outbox metrics; Emergency History with "Sync Now" action, sync status bar, and distinct Delivery / Acknowledgment / Cloud Sync badges
+- [ ] **Step 7: Multi-hop BLE Mesh Routing & Incident Operations Map**
+  - Multi-hop mesh gossip relaying across peer swarms
+  - Real-time GIS distress map and first responder incident feed
   - Opportunistic sync engine processing `sync_queue` outbox
   - Real-time incident mapping & first responder dispatch interface
 

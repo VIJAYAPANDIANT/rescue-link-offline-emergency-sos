@@ -163,6 +163,42 @@ class AlertStore {
   }
 
   /**
+   * Idempotently synchronize an alert using a stable client-generated alert ID.
+   * If an alert with the same ID already exists, returns existing without duplication.
+   *
+   * @param {object} alertData
+   * @returns {Promise<{ alert: object, isNew: boolean }>}
+   */
+  async syncAlert(alertData) {
+    const alerts = await this.readAlerts();
+    const existing = alerts.find((a) => a.id === alertData.id);
+
+    if (existing) {
+      return { alert: existing, isNew: false };
+    }
+
+    const newAlert = {
+      id: alertData.id,
+      senderId: alertData.senderId || null,
+      senderName: alertData.senderName || 'Anonymous Responder',
+      emergencyType: alertData.emergencyType,
+      details: alertData.details || '',
+      contactDetails: alertData.contactDetails || '',
+      location: alertData.location || null,
+      source: alertData.source || 'local',
+      relayedBy: alertData.relayedBy || null,
+      relayedByName: alertData.relayedByName || null,
+      status: alertData.status || 'Pending',
+      createdAt: alertData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    alerts.push(newAlert);
+    await this.writeAlerts(alerts);
+    return { alert: newAlert, isNew: true };
+  }
+
+  /**
    * Update the status of an existing alert.
    *
    * @param {string} id

@@ -13,22 +13,23 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
+import { syncService } from '../services/sync/syncService';
 import { AlertRepository, SyncQueueRepository } from '../database';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { StatusCard } from '../components/StatusCard';
 import { EMERGENCY_TYPES } from '../utils/constants';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
 import { formatTimestamp, formatCoordinates } from '../utils/helpers';
 
 /**
- * EmergencyHistoryScreen (Step 5 SQLite Integration)
+ * EmergencyHistoryScreen (Step 6 Reliable Offline-to-Cloud Sync)
  *
  * Single source of truth: SQLite database (`alerts` table).
  * Features:
  * - Immediate offline loading of all stored distress records.
  * - Displays source (Local, Bluetooth, Server), sync state, and ack state.
- * - Background synchronization when authenticated and online.
+ * - Manual "Sync Now" action with live progress and result indicators.
+ * - Automatic background synchronization when network connectivity returns.
  * - Pull-to-refresh and filtering by source and status.
  * - Database error handling and resilient empty states.
  * - Resolving alerts locally in SQLite and queuing sync items.
@@ -39,6 +40,9 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
   const [alerts, setAlerts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [lastSyncText, setLastSyncText] = useState(null);
   const [dbError, setDbError] = useState(null);
   const [serverNotice, setServerNotice] = useState(null);
   const [resolvingId, setResolvingId] = useState(null);
@@ -56,6 +60,9 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
         deliveryStatus: statusFilter !== 'ALL' ? statusFilter : undefined,
       });
       setAlerts(rows || []);
+
+      const pending = await SyncQueueRepository.getPendingCount();
+      setPendingSyncCount(pending);
     } catch (err) {
       console.error('[EmergencyHistoryScreen] SQLite load error:', err.message);
       setDbError(`Database Error: ${err.message}`);
@@ -91,7 +98,6 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
             updatedAt: serverAlert.updatedAt,
           });
         }
-        // Reload from SQLite after sync
         await loadAlertsFromSQLite();
       } else {
         setServerNotice('Viewing local SQLite records (Server unreachable or offline).');
@@ -101,10 +107,32 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
     }
   }, [isAuthenticated, loadAlertsFromSQLite]);
 
-  // Initial load and filter change trigger
+  // Initial load, filter change, and syncService subscription
   useEffect(() => {
     loadAlertsFromSQLite();
     syncWithServerIfPossible();
+
+    // Subscribe to syncService state changes
+    const unsubscribeSync = syncService.addSyncListener((state) => {
+      setIsSyncing(state.isSyncing);
+      if (state.lastSyncTime) {
+        setLastSyncText(`Last synced: ${formatTimestamp(state.lastSyncTime)}`);
+      }
+      loadAlertsFromSQLite();
+    });
+
+    // Check initial queue status
+    syncService.getSyncStatus().then((status) => {
+      setIsSyncing(status.isSyncing);
+      setPendingSyncCount(status.pendingCount);
+      if (status.lastSyncTime) {
+        setLastSyncText(`Last synced: ${formatTimestamp(status.lastSyncTime)}`);
+      }
+    });
+
+    return () => {
+      unsubscribeSync();
+    };
   }, [loadAlertsFromSQLite, syncWithServerIfPossible]);
 
   // Pull-to-refresh
@@ -117,12 +145,55 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
     setIsRefreshing(false);
   };
 
+  // Manual Trigger: Synchronize Outbox Now
+  const handleManualSyncNow = async () => {
+    if (isSyncing) return;
+
+    setIsSyncing(true);
+    const res = await syncService.syncPendingAlerts({ isManual: true });
+    await loadAlertsFromSQLite();
+    if (isAuthenticated) {
+      await syncWithServerIfPossible();
+    }
+    setIsSyncing(false);
+
+    if (res.success) {
+      Alert.alert(
+        'Cloud Sync Completed',
+        `Successfully synced ${res.synced || 0} alert(s) to cloud servers (${res.alreadySynced || 0} already up-to-date).`
+      );
+    } else if (res.reason === 'offline') {
+      Alert.alert(
+        'Device Offline',
+        'Unable to connect to cloud servers. All alerts remain safely stored in your local SQLite outbox and will sync automatically when connectivity returns.'
+      );
+    } else if (res.reason === 'unauthenticated') {
+      Alert.alert(
+        'Authentication Required',
+        'You are currently in Guest Mode. Please sign in to synchronize emergency records with central cloud responders.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Sign In', onPress: () => navigation.navigate('Login') },
+        ]
+      );
+    } else if (res.reason === 'auth_expired') {
+      Alert.alert(
+        'Session Expired',
+        'Your security token has expired. Your offline alerts remain safely preserved. Please sign in again to resume synchronization.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Sign In', onPress: () => navigation.navigate('Login') },
+        ]
+      );
+    }
+  };
+
   // Handle Mark as Resolved
   const handleResolveAlert = (alertItem) => {
     const alertId = alertItem.alertId || alertItem.id;
     Alert.alert(
       'Resolve Emergency Alert',
-      `Are you sure you want to mark this ${alertItem.emergencyType} alert as Resolved?\n\nThis will update your local SQLite record and queue a sync update for the server.`,
+      `Are you sure you want to mark this ${alertItem.emergencyType} alert as Resolved?\n\nThis updates your local SQLite record immediately and queues a synchronization update for the server.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -138,30 +209,22 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
               console.warn('[History] SQLite update status error:', dbErr.message);
             }
 
-            // 2. Dispatch to server if authenticated or queue in sync outbox
-            if (isAuthenticated && alertItem.source !== 'local') {
-              try {
-                const res = await apiClient.updateAlertStatus(alertId, 'Resolved');
-                if (!res.success) {
-                  await SyncQueueRepository.enqueue({
-                    alertId,
-                    operation: 'RESOLVE',
-                    payload: { status: 'Resolved' },
-                  });
-                }
-              } catch (e) {
-                await SyncQueueRepository.enqueue({
-                  alertId,
-                  operation: 'RESOLVE',
-                  payload: { status: 'Resolved' },
-                });
-              }
-            } else {
+            // 2. Queue in offline outbox
+            try {
               await SyncQueueRepository.enqueue({
                 alertId,
                 operation: 'RESOLVE',
                 payload: { status: 'Resolved' },
               });
+            } catch (qErr) {
+              console.warn('[History] Enqueue resolve error:', qErr.message);
+            }
+
+            // 3. Opportunistically dispatch if online
+            if (isAuthenticated) {
+              try {
+                await apiClient.updateAlertStatus(alertId, 'Resolved');
+              } catch (e) {}
             }
 
             setResolvingId(null);
@@ -203,6 +266,39 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
           </Text>
         </View>
 
+        {/* Cloud Synchronization Outbox Banner */}
+        <View style={[styles.syncBox, shadows.card]}>
+          <View style={styles.syncBoxLeft}>
+            <Text style={styles.syncBoxIcon}>{isSyncing ? '🔄' : pendingSyncCount > 0 ? '🟡' : '🟢'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.syncBoxTitle}>
+                {isSyncing
+                  ? 'Synchronizing with Cloud...'
+                  : pendingSyncCount > 0
+                  ? `${pendingSyncCount} Alert(s) in Offline Outbox`
+                  : 'Cloud Records Synchronized'}
+              </Text>
+              <Text style={styles.syncBoxSubtitle}>
+                {isSyncing
+                  ? 'Uploading offline outbox batches...'
+                  : lastSyncText || 'Ready for opportunistic cloud sync'}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={[styles.syncNowBtn, isSyncing && styles.syncNowBtnDisabled]}
+            onPress={handleManualSyncNow}
+            disabled={isSyncing}
+            activeOpacity={0.7}
+          >
+            {isSyncing ? (
+              <ActivityIndicator size="small" color={colors.textInverse} />
+            ) : (
+              <Text style={styles.syncNowBtnText}>Sync Now</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
         {/* Database Error State */}
         {dbError ? (
           <View style={styles.errorBanner}>
@@ -229,7 +325,7 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
         {!isAuthenticated ? (
           <View style={styles.guestNotice}>
             <Text style={styles.guestNoticeText}>
-              👤 Guest Mode · Viewing local SQLite storage. Sign in to synchronize with cloud servers.
+              👤 Guest Mode · Viewing local SQLite storage. Sign in to synchronize with central cloud servers.
             </Text>
           </View>
         ) : null}
@@ -346,7 +442,7 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                     </View>
                   </View>
 
-                  {/* Badges Bar: Source, Ack State, Sync State */}
+                  {/* Badges Bar: Source, Ack State, Cloud Sync State */}
                   <View style={styles.badgesRow}>
                     {/* Source Badge */}
                     <View
@@ -381,7 +477,7 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                       </Text>
                     </View>
 
-                    {/* Sync Badge */}
+                    {/* Cloud Sync State Badge */}
                     <View
                       style={[
                         styles.tagBadge,
@@ -394,7 +490,7 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                           isSynced ? styles.tagSyncedText : styles.tagPendingSyncText,
                         ]}
                       >
-                        {isSynced ? '🟢 SYNCED' : '🟡 PENDING SYNC'}
+                        {isSynced ? '🟢 CLOUD SYNCED' : '🟡 PENDING CLOUD SYNC'}
                       </Text>
                     </View>
                   </View>
@@ -488,7 +584,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxxl,
   },
   header: {
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   screenTitle: {
     fontSize: 24,
@@ -499,6 +595,53 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  syncBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  syncBoxLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 8,
+  },
+  syncBoxIcon: {
+    fontSize: 20,
+  },
+  syncBoxTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  syncBoxSubtitle: {
+    fontSize: 11,
+    color: colors.textTertiary,
+    marginTop: 1,
+  },
+  syncNowBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  syncNowBtnDisabled: {
+    opacity: 0.6,
+  },
+  syncNowBtnText: {
+    color: colors.textInverse,
+    fontSize: 12,
+    fontWeight: '700',
   },
   errorBanner: {
     flexDirection: 'row',

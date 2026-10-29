@@ -70,6 +70,31 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 2,
+    description: 'Add retry scheduling metadata (lastAttemptAt, nextRetryAt) and deduplication index to sync_queue',
+    up: async (db) => {
+      // 1. Add backoff retry columns
+      await db.execAsync(`
+        ALTER TABLE sync_queue ADD COLUMN lastAttemptAt TEXT;
+        ALTER TABLE sync_queue ADD COLUMN nextRetryAt TEXT;
+      `);
+
+      // 2. Prune any stale duplicates before creating unique index
+      await db.execAsync(`
+        DELETE FROM sync_queue
+        WHERE id NOT IN (
+          SELECT MAX(id) FROM sync_queue GROUP BY alertId, operation
+        );
+      `);
+
+      // 3. Create index for retry polling and unique index to prevent duplicate queue items
+      await db.execAsync(`
+        CREATE INDEX IF NOT EXISTS idx_sync_queue_retry ON sync_queue(status, nextRetryAt);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_queue_alert_op ON sync_queue(alertId, operation);
+      `);
+    },
+  },
 ];
 
 /**
@@ -99,6 +124,7 @@ export const runMigrations = async (db) => {
         'INSERT INTO schema_migrations (version, appliedAt, description) VALUES (?, ?, ?);',
         [migration.version, new Date().toISOString(), migration.description]
       );
+      await db.execAsync(`PRAGMA user_version = ${migration.version};`);
       console.log(`[Migrations] Migration v${migration.version} applied successfully.`);
     }
   }

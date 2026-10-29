@@ -13,6 +13,8 @@ import { SOSButton } from '../components/SOSButton';
 import { StatusCard } from '../components/StatusCard';
 import { apiClient } from '../services/api/apiClient';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
+import { syncService } from '../services/sync/syncService';
+import { networkService } from '../services/network/networkService';
 import { AlertRepository } from '../database';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
 import { APP_CONFIG, SAFETY_DISCLAIMER } from '../utils/constants';
@@ -36,6 +38,11 @@ export const HomeScreen = ({ navigation }) => {
   const [bleSubtitle, setBleSubtitle] = useState('Verifying BLE stack...');
   const [storageStatus, setStorageStatus] = useState('SQLite Active');
   const [storageSubtitle, setStorageSubtitle] = useState('Local WAL persistence initialized');
+  const [outboxCount, setOutboxCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatusText, setSyncStatusText] = useState('All Synced');
+  const [syncVariant, setSyncVariant] = useState('success');
+  const [syncSubtitle, setSyncSubtitle] = useState('Outbox empty · Up to date with cloud');
 
   // Check backend health, Bluetooth readiness, and SQLite status on mount
   useEffect(() => {
@@ -72,26 +79,76 @@ export const HomeScreen = ({ navigation }) => {
       }
     });
 
-    AlertRepository.getAlertCounts()
-      .then((counts) => {
+    const refreshCountsAndSync = async () => {
+      try {
+        const counts = await AlertRepository.getAlertCounts();
         if (isMounted) {
           setStorageStatus(`SQLite Active (${counts.total} Records)`);
           setStorageSubtitle(
             `${counts.localCount} local, ${counts.bleCount} BLE, ${counts.pendingSyncCount} pending sync`
           );
         }
-      })
-      .catch((e) => {
+      } catch (e) {
         if (isMounted) {
           setStorageStatus('SQLite Standby');
           setStorageSubtitle('Local database ready');
         }
-      });
+      }
+
+      try {
+        const syncState = await syncService.getSyncStatus();
+        if (isMounted) {
+          setOutboxCount(syncState.pendingCount);
+          if (syncState.isSyncing) {
+            setSyncStatusText('Syncing in Progress...');
+            setSyncVariant('info');
+            setSyncSubtitle('Uploading queued alerts to cloud server');
+          } else if (syncState.pendingCount > 0) {
+            setSyncStatusText(`${syncState.pendingCount} Pending in Outbox`);
+            setSyncVariant('warning');
+            setSyncSubtitle('Alerts will auto-upload when connectivity is confirmed');
+          } else {
+            setSyncStatusText('All Synced');
+            setSyncVariant('success');
+            setSyncSubtitle('Outbox empty · Cloud repository is up to date');
+          }
+        }
+      } catch (e) {
+        // Ignored
+      }
+    };
+
+    refreshCountsAndSync();
+
+    const unsubscribeSync = syncService.addSyncListener((state) => {
+      if (!isMounted) return;
+      setIsSyncing(state.isSyncing);
+      if (state.isSyncing) {
+        setSyncStatusText('Syncing...');
+        setSyncVariant('info');
+        setSyncSubtitle('Contacting RescueLink cloud endpoint...');
+      } else {
+        refreshCountsAndSync();
+      }
+    });
+
+    const unsubscribeNet = networkService.addConnectivityListener((netState) => {
+      if (!isMounted) return;
+      if (netState.isConnected) {
+        refreshCountsAndSync();
+      }
+    });
+
+    // Also refresh when screen regains focus
+    const unsubscribeFocus = navigation.addListener ? navigation.addListener('focus', refreshCountsAndSync) : null;
 
     return () => {
       isMounted = false;
+      unsubscribeSync();
+      unsubscribeNet();
+      if (unsubscribeFocus) unsubscribeFocus();
     };
-  }, []);
+  }, [navigation]);
 
   const handleSOSPress = () => {
     navigation.navigate('SendSOS');
@@ -197,6 +254,14 @@ export const HomeScreen = ({ navigation }) => {
           icon="💾"
           variant="success"
           subtitle={storageSubtitle}
+        />
+
+        <StatusCard
+          title="Cloud Synchronization"
+          value={syncStatusText}
+          icon="🔄"
+          variant={syncVariant}
+          subtitle={syncSubtitle}
         />
 
         <StatusCard

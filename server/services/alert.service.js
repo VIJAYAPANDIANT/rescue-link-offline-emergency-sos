@@ -236,6 +236,204 @@ class AlertService {
     const updatedAlert = await alertStore.updateStatus(alertId, 'Resolved');
     return updatedAlert;
   }
+
+  /**
+   * Batch synchronize alerts from an authenticated client with idempotent deduplication
+   * and strict origin/relay attribution.
+   *
+   * @param {string} userId - Authenticated user ID
+   * @param {Array<object>} alertItems - Batch of alerts to synchronize
+   */
+  async syncAlerts(userId, alertItems) {
+    if (!userId) {
+      const err = new Error('Authentication required for synchronization.');
+      err.statusCode = 401;
+      err.code = 'UNAUTHORIZED';
+      throw err;
+    }
+
+    const user = await userStore.findById(userId);
+    if (!user) {
+      const err = new Error('Authenticated user profile not found.');
+      err.statusCode = 401;
+      err.code = 'USER_NOT_FOUND';
+      throw err;
+    }
+
+    if (!Array.isArray(alertItems)) {
+      const err = new Error('alerts payload must be an array of alert objects.');
+      err.statusCode = 400;
+      err.code = 'INVALID_SYNC_PAYLOAD';
+      throw err;
+    }
+
+    const results = [];
+    let syncedCount = 0;
+    let alreadySyncedCount = 0;
+    let failedCount = 0;
+
+    for (const item of alertItems) {
+      try {
+        const alertId = item.alertId || item.id;
+        if (!alertId || typeof alertId !== 'string' || !alertId.trim()) {
+          results.push({
+            alertId: alertId || 'unknown',
+            status: 'failed',
+            error: 'Missing required string alertId.',
+          });
+          failedCount++;
+          continue;
+        }
+
+        const cleanAlertId = alertId.trim();
+
+        // 1. Validate emergencyType
+        if (
+          !item.emergencyType ||
+          typeof item.emergencyType !== 'string' ||
+          !ALLOWED_EMERGENCY_TYPES.includes(item.emergencyType)
+        ) {
+          results.push({
+            alertId: cleanAlertId,
+            status: 'failed',
+            error: `Invalid emergency type "${item.emergencyType}". Allowed: ${ALLOWED_EMERGENCY_TYPES.join(', ')}.`,
+          });
+          failedCount++;
+          continue;
+        }
+
+        // 2. Validate details
+        let sanitizedDetails = '';
+        if (item.details !== undefined && item.details !== null) {
+          if (typeof item.details !== 'string') {
+            results.push({
+              alertId: cleanAlertId,
+              status: 'failed',
+              error: 'Details must be a text string.',
+            });
+            failedCount++;
+            continue;
+          }
+          sanitizedDetails = item.details.trim();
+          if (sanitizedDetails.length > 1000) {
+            results.push({
+              alertId: cleanAlertId,
+              status: 'failed',
+              error: 'Details must not exceed 1000 characters.',
+            });
+            failedCount++;
+            continue;
+          }
+        }
+
+        // 3. Validate contactDetails
+        let sanitizedContact = '';
+        if (item.contactDetails !== undefined && item.contactDetails !== null) {
+          if (typeof item.contactDetails !== 'string') {
+            results.push({
+              alertId: cleanAlertId,
+              status: 'failed',
+              error: 'Contact details must be a text string.',
+            });
+            failedCount++;
+            continue;
+          }
+          sanitizedContact = item.contactDetails.trim();
+          if (sanitizedContact.length > 200) {
+            results.push({
+              alertId: cleanAlertId,
+              status: 'failed',
+              error: 'Contact details must not exceed 200 characters.',
+            });
+            failedCount++;
+            continue;
+          }
+        }
+
+        // 4. Validate location
+        let sanitizedLocation = null;
+        if (item.location && typeof item.location === 'object') {
+          const { latitude, longitude } = item.location;
+          if (typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+            if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+              results.push({
+                alertId: cleanAlertId,
+                status: 'failed',
+                error: 'Coordinates out of bounds (-90 to 90, -180 to 180).',
+              });
+              failedCount++;
+              continue;
+            }
+            sanitizedLocation = {
+              latitude: Number(latitude),
+              longitude: Number(longitude),
+            };
+          }
+        }
+
+        // 5. Origin and Relay Authorization:
+        // If alert originated via BLE, preserve peer author metadata while recording authenticated relay node
+        const isBleSource = item.source === 'bluetooth' || item.source === 'bluetooth_relay';
+        const senderId = isBleSource ? null : user.id;
+        const senderName = isBleSource
+          ? (item.originalSenderName || item.senderName || 'Peer via BLE')
+          : user.name;
+        const relayedBy = isBleSource ? user.id : null;
+        const relayedByName = isBleSource ? user.name : null;
+        const finalSource = isBleSource ? 'bluetooth_relay' : 'local';
+
+        // 6. Perform idempotent sync write
+        const syncResult = await alertStore.syncAlert({
+          id: cleanAlertId,
+          senderId,
+          senderName,
+          emergencyType: item.emergencyType,
+          details: sanitizedDetails,
+          contactDetails: sanitizedContact,
+          location: sanitizedLocation,
+          source: finalSource,
+          relayedBy,
+          relayedByName,
+          status: item.deliveryStatus === 'Resolved' || item.status === 'Resolved' ? 'Resolved' : 'Pending',
+          createdAt: item.createdAt || new Date().toISOString(),
+        });
+
+        if (syncResult.isNew) {
+          results.push({
+            alertId: cleanAlertId,
+            status: 'synced',
+            alert: syncResult.alert,
+          });
+          syncedCount++;
+        } else {
+          results.push({
+            alertId: cleanAlertId,
+            status: 'already_synced',
+            alert: syncResult.alert,
+          });
+          alreadySyncedCount++;
+        }
+      } catch (itemErr) {
+        results.push({
+          alertId: item.alertId || item.id || 'unknown',
+          status: 'failed',
+          error: itemErr.message || 'Processing error',
+        });
+        failedCount++;
+      }
+    }
+
+    return {
+      success: true,
+      results,
+      summary: {
+        synced: syncedCount,
+        alreadySynced: alreadySyncedCount,
+        failed: failedCount,
+        total: alertItems.length,
+      },
+    };
+  }
 }
 
 const alertService = new AlertService();
