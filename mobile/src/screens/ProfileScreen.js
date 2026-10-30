@@ -274,6 +274,29 @@ export const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
+        {/* Emergency Contacts & Notifications Section */}
+        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
+          <Text style={styles.cardHeaderTitle}>🚨 Emergency Contacts & SOS Alerts</Text>
+          <Text style={styles.cardHeaderCaption}>
+            Manage trusted emergency contacts and review multi-channel (Email / SMS) delivery status.
+          </Text>
+
+          <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+            <PrimaryButton
+              title="Manage Emergency Contacts"
+              onPress={() => navigation.navigate('Contacts')}
+              variant="primary"
+              icon="👥"
+            />
+            <PrimaryButton
+              title="View SOS Notification Logs"
+              onPress={() => navigation.navigate('NotificationHistory')}
+              variant="outline"
+              icon="🔔"
+            />
+          </View>
+        </View>
+
         {/* Server Gateway & Network Settings */}
         <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
           <Text style={styles.cardHeaderTitle}>🌐 Server Gateway Configuration</Text>

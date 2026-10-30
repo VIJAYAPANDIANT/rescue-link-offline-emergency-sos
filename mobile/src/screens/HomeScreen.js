@@ -333,6 +333,38 @@ export const HomeScreen = ({ navigation }) => {
               Review local drafts and alerts
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionCard, shadows.card]}
+            activeOpacity={0.75}
+            onPress={() => navigation.navigate('Contacts')}
+            accessibilityRole="button"
+            accessibilityLabel="Emergency Contacts"
+          >
+            <View style={[styles.actionIconCircle, { backgroundColor: '#DCFCE7' }]}>
+              <Text style={styles.actionIcon}>👥</Text>
+            </View>
+            <Text style={styles.actionCardTitle}>Contacts</Text>
+            <Text style={styles.actionCardSubtitle}>
+              Configure SOS notification targets
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionCard, shadows.card]}
+            activeOpacity={0.75}
+            onPress={() => navigation.navigate('NotificationHistory')}
+            accessibilityRole="button"
+            accessibilityLabel="Notification Logs"
+          >
+            <View style={[styles.actionIconCircle, { backgroundColor: '#FEF3C7' }]}>
+              <Text style={styles.actionIcon}>🔔</Text>
+            </View>
+            <Text style={styles.actionCardTitle}>Notification Logs</Text>
+            <Text style={styles.actionCardSubtitle}>
+              Delivery status for SMS/Email
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Footer info */}

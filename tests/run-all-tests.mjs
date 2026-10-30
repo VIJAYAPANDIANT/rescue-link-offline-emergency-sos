@@ -23,6 +23,9 @@ import { AlertRepository } from '../mobile/src/database/alertRepository.js';
 import { ReceiptRepository } from '../mobile/src/database/receiptRepository.js';
 import { SyncQueueRepository } from '../mobile/src/database/syncQueueRepository.js';
 import { RelayRepository } from '../mobile/src/database/relayRepository.js';
+import { ContactRepository } from '../mobile/src/database/contactRepository.js';
+import { NotificationRepository } from '../mobile/src/database/notificationRepository.js';
+import { notificationQueueService } from '../mobile/src/services/notification/notificationQueueService.js';
 import { relayService } from '../mobile/src/services/relay/relayService.js';
 import { relaySettings } from '../mobile/src/services/relay/relaySettings.js';
 import { syncService } from '../mobile/src/services/sync/syncService.js';
@@ -45,6 +48,9 @@ import config from '../server/config/env.js';
 import userStore from '../server/services/userStore.js';
 import alertStore from '../server/services/alertStore.js';
 import alertService from '../server/services/alert.service.js';
+import contactStore from '../server/services/contactStore.js';
+import notificationStore from '../server/services/notificationStore.js';
+import notificationService from '../server/services/notification/notificationService.js';
 
 // Helper to create an in-memory SQLite wrapper conforming to expo-sqlite async interface
 function createInMemoryExpoSqliteWrapper() {
@@ -116,7 +122,7 @@ function stopEphemeralServer() {
 
 async function runComprehensiveTestSuite() {
   console.log('================================================================');
-  console.log('   RESCUELINK STEP 8 COMPREHENSIVE AUTOMATED TEST SUITE');
+  console.log('   RESCUELINK STEP 9 COMPREHENSIVE AUTOMATED TEST SUITE');
   console.log('================================================================\n');
 
   let totalPassed = 0;
@@ -140,6 +146,8 @@ async function runComprehensiveTestSuite() {
 
   const initialAlerts = await alertStore.readAlerts();
   const initialUsers = await userStore.readUsers();
+  const initialContacts = await contactStore.readContacts();
+  const initialNotifications = await notificationStore.readNotifications();
 
   try {
     // =========================================================================
@@ -1068,12 +1076,398 @@ async function runComprehensiveTestSuite() {
       assert.strictEqual(backendAlert.forwarderId, deviceBNodeId);
       assert.strictEqual(backendAlert.relayedBy, testUserId);
     });
+
+    // =========================================================================
+    // MODULE 7: EMERGENCY CONTACT MANAGEMENT & SOS NOTIFICATIONS
+    // =========================================================================
+    console.log('\n--- Module 7: Emergency Contact Management & Notifications ---');
+
+    const otherUserToken = jwt.sign(
+      { id: 'different-user-456', email: 'other@example.com' },
+      config.jwt.secret,
+      { expiresIn: '1h' }
+    );
+
+    let createdPrimaryContactId = null;
+    let createdSecondaryContactId = null;
+
+    await runTest('Contacts: Input validation rejects invalid names, phones, emails, and priorities', async () => {
+      // 1. Missing name
+      const res1 = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          phone: '+14155552671',
+        }),
+      });
+      assert.strictEqual(res1.status, 400);
+
+      // 2. Missing both phone and email
+      const res2 = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Doctor Jane',
+        }),
+      });
+      assert.strictEqual(res2.status, 400);
+
+      // 3. Bad phone format (< 7 digits)
+      const res3 = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Doctor Jane',
+          phone: '1234',
+        }),
+      });
+      assert.strictEqual(res3.status, 400);
+
+      // 4. Bad email format
+      const res4 = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Doctor Jane',
+          email: 'invalid-email-address',
+        }),
+      });
+      assert.strictEqual(res4.status, 400);
+
+      // 5. Bad priority (> 3)
+      const res5 = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Doctor Jane',
+          phone: '+14155552671',
+          priority: 9,
+        }),
+      });
+      assert.strictEqual(res5.status, 400);
+    });
+
+    await runTest('Contacts: User 1 creates and lists emergency contacts with priority ordering', async () => {
+      // Secondary Contact (Priority 2)
+      const secRes = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Bob Secondary',
+          phone: '+14155552671',
+          relationship: 'Friend',
+          priority: 2,
+        }),
+      });
+      assert.strictEqual(secRes.status, 201);
+      const secData = await secRes.json();
+      createdSecondaryContactId = secData.data.id;
+      assert.strictEqual(secData.data.name, 'Bob Secondary');
+      assert.strictEqual(secData.data.priority, 2);
+
+      // Primary Contact (Priority 1)
+      const priRes = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Alice Primary',
+          email: 'alice.primary@example.com',
+          relationship: 'Spouse',
+          priority: 1,
+        }),
+      });
+      assert.strictEqual(priRes.status, 201);
+      const priData = await priRes.json();
+      createdPrimaryContactId = priData.data.id;
+      assert.strictEqual(priData.data.name, 'Alice Primary');
+      assert.strictEqual(priData.data.priority, 1);
+
+      // List contacts: Priority 1 must appear before Priority 2
+      const listRes = await fetch(`${testServerBaseUrl}/contacts`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(listRes.status, 200);
+      const listData = await listRes.json();
+      assert.ok(listData.data.length >= 2);
+      assert.strictEqual(listData.data[0].id, createdPrimaryContactId);
+      assert.strictEqual(listData.data[0].priority, 1);
+      assert.strictEqual(listData.data[1].id, createdSecondaryContactId);
+      assert.strictEqual(listData.data[1].priority, 2);
+    });
+
+    await runTest('Contacts: User 1 updates contact details and toggles enabled state', async () => {
+      const updateRes = await fetch(`${testServerBaseUrl}/contacts/${createdSecondaryContactId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          relationship: 'Brother',
+          isEnabled: false,
+        }),
+      });
+      assert.strictEqual(updateRes.status, 200);
+      const updateData = await updateRes.json();
+      assert.strictEqual(updateData.data.relationship, 'Brother');
+      assert.strictEqual(updateData.data.isEnabled, false);
+
+      // Verify findEnabledByUserId filters out disabled contacts
+      const enabledContacts = await contactStore.findEnabledByUserId(testUserId);
+      const containsBob = enabledContacts.some((c) => c.id === createdSecondaryContactId);
+      assert.strictEqual(containsBob, false, 'Disabled contact must not be in enabled list');
+      const containsAlice = enabledContacts.some((c) => c.id === createdPrimaryContactId);
+      assert.strictEqual(containsAlice, true, 'Enabled contact must be in enabled list');
+    });
+
+    await runTest('Contacts: Ownership isolation prevents User 2 from viewing, updating, or deleting User 1 contacts', async () => {
+      // User 2 tries to update User 1's contact
+      const patchRes = await fetch(`${testServerBaseUrl}/contacts/${createdPrimaryContactId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${otherUserToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Hacked Name',
+        }),
+      });
+      assert.strictEqual(patchRes.status, 404, 'Must conceal other users contacts with 404');
+
+      // User 2 tries to delete User 1's contact
+      const delRes = await fetch(`${testServerBaseUrl}/contacts/${createdPrimaryContactId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${otherUserToken}`,
+        },
+      });
+      assert.strictEqual(delRes.status, 404, 'Must conceal other users contacts with 404');
+    });
+
+    await runTest('Contacts: User 1 successfully deletes contact with 200 OK', async () => {
+      const delRes = await fetch(`${testServerBaseUrl}/contacts/${createdSecondaryContactId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(delRes.status, 200);
+
+      // Verify contact was removed
+      const remaining = await contactStore.findByUserId(testUserId);
+      const hasBob = remaining.some((c) => c.id === createdSecondaryContactId);
+      assert.strictEqual(hasBob, false);
+    });
+
+    await runTest('Notifications: Message formatting enforces explicit location consent and credential scrubbing', async () => {
+      const sampleAlert = {
+        id: 'alert-test-consent',
+        emergencyType: 'Medical Emergency',
+        details: 'Patient unconscious, chest pain',
+        createdAt: '2026-10-30T12:00:00.000Z',
+        location: { latitude: 37.7749, longitude: -122.4194 },
+      };
+
+      // 1. With location consent = true
+      const msgWithConsent = notificationService.formatNotificationMessage({
+        alert: sampleAlert,
+        senderName: 'Test Sender',
+        locationConsent: true,
+      });
+      assert.ok(
+        msgWithConsent.body.includes('https://maps.google.com/?q=37.7749,-122.4194'),
+        'Must contain Google Maps URL when consent is granted'
+      );
+      assert.ok(
+        msgWithConsent.smsBody.includes('https://maps.google.com/?q=37.7749,-122.4194'),
+        'SMS body must include map link when consent is granted'
+      );
+
+      // 2. With location consent = false
+      const msgWithoutConsent = notificationService.formatNotificationMessage({
+        alert: sampleAlert,
+        senderName: 'Test Sender',
+        locationConsent: false,
+      });
+      assert.ok(
+        !msgWithoutConsent.body.includes('maps.google.com'),
+        'Must omit Google Maps link when consent is withheld'
+      );
+      assert.ok(
+        !msgWithoutConsent.smsBody.includes('maps.google.com'),
+        'SMS body must omit map link when consent is withheld'
+      );
+      assert.ok(
+        msgWithoutConsent.body.includes('Omitted by sender or unavailable'),
+        'Must state location is omitted'
+      );
+
+      // 3. Credential scrubbing: zero tokens or passwords in distress message
+      const combined = `${msgWithConsent.subject}\n${msgWithConsent.body}\n${msgWithConsent.smsBody}`;
+      assert.ok(!combined.includes('password'), 'Must not contain password');
+      assert.ok(!combined.includes('Bearer'), 'Must not contain Bearer token');
+      assert.ok(!combined.includes('jwt'), 'Must not contain jwt token');
+    });
+
+    await runTest('Notifications: SOS alert creation dispatches notifications to enabled contacts with idempotency', async () => {
+      // Create SOS alert while Alice Primary is enabled
+      const sosRes = await fetch(`${testServerBaseUrl}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          emergencyType: 'Fire',
+          details: 'Fire spreading on 2nd floor, stairwell blocked',
+          location: { latitude: 37.7749, longitude: -122.4194 },
+          locationConsent: true,
+        }),
+      });
+      assert.strictEqual(sosRes.status, 201);
+      const sosData = await sosRes.json();
+      const alertId = sosData.data.id;
+
+      // Small delay to allow asynchronous non-blocking notification dispatch
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Verify notification task was created in notificationStore
+      const userNotifications = await notificationStore.findByUserId(testUserId, { alertId });
+      assert.ok(userNotifications.length >= 1, 'At least 1 notification task must be created for enabled contact');
+      const emailTask = userNotifications.find((n) => n.channel === 'email');
+      assert.ok(emailTask, 'Email task must be generated for Alice Primary');
+      assert.strictEqual(emailTask.alertId, alertId);
+      assert.strictEqual(emailTask.contactId, createdPrimaryContactId);
+      assert.strictEqual(emailTask.status, 'sent');
+      assert.strictEqual(emailTask.provider, 'simulated_smtp');
+
+      // Test idempotency: triggering dispatch again with identical alert & contact should not duplicate
+      const testUser = await userStore.findById(testUserId);
+      const redispatch = await notificationService.dispatchSOSNotifications(testUser, sosData.data);
+      assert.strictEqual(redispatch.queuedCount, 0, 'Idempotency key must prevent duplicate tasks');
+    });
+
+    await runTest('Notifications: Mobile SQLite Migration v4 creates contacts and notification_tasks tables', async () => {
+      const mockDb = createInMemoryExpoSqliteWrapper();
+      await setCustomDatabase(mockDb);
+
+      // Apply migrations v1-v4
+      await runMigrations(mockDb);
+
+      const migrations = await mockDb.getAllAsync('SELECT version FROM schema_migrations ORDER BY version ASC;');
+      assert.strictEqual(migrations.length, 4);
+      assert.strictEqual(migrations[3].version, 4);
+
+      // Test ContactRepository SQLite operations
+      const savedContact = await ContactRepository.upsertContact({
+        name: 'Local SQLite Contact',
+        phone: '+14155559999',
+        email: 'local@example.com',
+        priority: 1,
+        isEnabled: true,
+      });
+      assert.ok(savedContact.contactId);
+      assert.strictEqual(savedContact.name, 'Local SQLite Contact');
+
+      const allContacts = await ContactRepository.getAllContacts();
+      assert.strictEqual(allContacts.length, 1);
+
+      await ContactRepository.toggleContactEnabled(savedContact.contactId, false);
+      const enabled = await ContactRepository.getEnabledContacts();
+      assert.strictEqual(enabled.length, 0);
+
+      // Test NotificationRepository SQLite operations
+      const task = await NotificationRepository.recordTask({
+        alertId: 'mock-sos-123',
+        contactId: savedContact.contactId,
+        contactName: savedContact.name,
+        channel: 'email',
+        recipient: 'local@example.com',
+        status: 'queued',
+      });
+      assert.ok(task.taskId);
+      assert.strictEqual(task.status, 'queued');
+
+      const tasksForAlert = await NotificationRepository.getTasksByAlertId('mock-sos-123');
+      assert.strictEqual(tasksForAlert.length, 1);
+
+      await NotificationRepository.updateTaskStatus(task.taskId, 'delivered');
+      const updatedTask = await NotificationRepository.getTaskById(task.taskId);
+      assert.strictEqual(updatedTask.status, 'delivered');
+    });
+
+    await runTest('Notifications: Notification history queries isolate records by user and support test dispatch', async () => {
+      // User 1 queries /api/notifications
+      const u1Res = await fetch(`${testServerBaseUrl}/notifications`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(u1Res.status, 200);
+      const u1Data = await u1Res.json();
+      assert.ok(u1Data.count >= 1);
+
+      // User 2 queries /api/notifications -> 0 records
+      const u2Res = await fetch(`${testServerBaseUrl}/notifications`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${otherUserToken}`,
+        },
+      });
+      assert.strictEqual(u2Res.status, 200);
+      const u2Data = await u2Res.json();
+      assert.strictEqual(u2Data.count, 0, 'User 2 must not see User 1 notifications');
+
+      // Test notification endpoint POST /api/notifications/test
+      const testNotifRes = await fetch(`${testServerBaseUrl}/notifications/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          channel: 'email',
+          recipient: 'test-doctor@example.com',
+        }),
+      });
+      assert.strictEqual(testNotifRes.status, 200);
+      const testNotifData = await testNotifRes.json();
+      assert.strictEqual(testNotifData.success, true);
+      assert.strictEqual(testNotifData.data.provider, 'simulated_smtp');
+    });
   } finally {
     // Teardown and reset test databases and stores
     await stopEphemeralServer();
     await resetDatabaseInstance();
     await alertStore.writeAlerts(initialAlerts);
     await userStore.writeUsers(initialUsers);
+    await contactStore.writeContacts(initialContacts);
+    await notificationStore.writeNotifications(initialNotifications);
   }
 
   console.log('\n================================================================');
@@ -1081,7 +1475,7 @@ async function runComprehensiveTestSuite() {
   console.log('================================================================\n');
 
   if (totalPassed === totalTests) {
-    console.log('✅ ALL STEP 8 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
+    console.log('✅ ALL STEP 9 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
     process.exit(0);
   } else {
     console.error(`❌ ${totalTests - totalPassed} TEST(S) FAILED.\n`);

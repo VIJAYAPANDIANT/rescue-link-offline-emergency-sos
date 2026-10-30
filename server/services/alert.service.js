@@ -6,6 +6,7 @@
 
 const alertStore = require('./alertStore');
 const userStore = require('./userStore');
+const notificationService = require('./notification/notificationService');
 
 const ALLOWED_EMERGENCY_TYPES = [
   'Medical Emergency',
@@ -29,7 +30,7 @@ class AlertService {
    * @param {string} [params.contactDetails]
    * @param {object|null} [params.location]
    */
-  async createAlert({ senderId, emergencyType, details, contactDetails, location }) {
+  async createAlert({ senderId, emergencyType, details, contactDetails, location, locationConsent = true }) {
     if (!senderId) {
       const err = new Error('Authentication required: missing sender identifier.');
       err.statusCode = 401;
@@ -140,6 +141,15 @@ class AlertService {
       contactDetails: sanitizedContactDetails,
       location: sanitizedLocation,
     });
+
+    // Non-blocking notification dispatch to enabled emergency contacts
+    notificationService
+      .dispatchSOSNotifications(user, createdAlert, {
+        locationConsent: locationConsent !== false,
+      })
+      .catch((err) => {
+        console.warn('[AlertService] Notification dispatch warning:', err.message);
+      });
 
     return createdAlert;
   }
@@ -409,6 +419,21 @@ class AlertService {
             alert: syncResult.alert,
           });
           syncedCount++;
+
+          // Asynchronously dispatch notifications for newly synced alerts
+          const notifyUser = isBleSource && item.originalSenderId
+            ? await userStore.findById(item.originalSenderId)
+            : (!isBleSource ? user : null);
+
+          if (notifyUser) {
+            notificationService
+              .dispatchSOSNotifications(notifyUser, syncResult.alert, {
+                locationConsent: item.locationConsent !== false,
+              })
+              .catch((notifErr) => {
+                console.warn('[AlertService] Sync notification dispatch warning:', notifErr.message);
+              });
+          }
         } else {
           results.push({
             alertId: cleanAlertId,

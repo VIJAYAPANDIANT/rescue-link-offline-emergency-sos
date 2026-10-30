@@ -8,6 +8,8 @@ import { EmergencyHistoryScreen } from '../screens/EmergencyHistoryScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { EmergencyContactsScreen } from '../screens/EmergencyContactsScreen';
+import { NotificationHistoryScreen } from '../screens/NotificationHistoryScreen';
 import { colors, spacing, shadows } from '../utils/theme';
 
 /**
@@ -87,6 +89,11 @@ const NavigatorContent = () => {
             route={{ params: routeParams }}
           />
         );
+      case 'Contacts':
+      case 'EmergencyContacts':
+        return <EmergencyContactsScreen navigation={navigation} route={{ params: routeParams }} />;
+      case 'NotificationHistory':
+        return <NotificationHistoryScreen navigation={navigation} route={{ params: routeParams }} />;
       case 'Home':
       default:
         return (

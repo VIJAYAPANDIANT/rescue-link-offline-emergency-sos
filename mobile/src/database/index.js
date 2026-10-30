@@ -11,12 +11,16 @@ export { AlertRepository } from './alertRepository.js';
 export { ReceiptRepository } from './receiptRepository.js';
 export { SyncQueueRepository } from './syncQueueRepository.js';
 export { RelayRepository } from './relayRepository.js';
+export { ContactRepository } from './contactRepository.js';
+export { NotificationRepository } from './notificationRepository.js';
 
 import { getDatabase } from './database.js';
 import { AlertRepository } from './alertRepository.js';
 import { ReceiptRepository } from './receiptRepository.js';
 import { SyncQueueRepository } from './syncQueueRepository.js';
 import { RelayRepository } from './relayRepository.js';
+import { ContactRepository } from './contactRepository.js';
+import { NotificationRepository } from './notificationRepository.js';
 
 export const databaseService = {
   getDatabase,
@@ -24,6 +28,8 @@ export const databaseService = {
   receipts: ReceiptRepository,
   syncQueue: SyncQueueRepository,
   relay: RelayRepository,
+  contacts: ContactRepository,
+  notifications: NotificationRepository,
 };
 
 export default databaseService;

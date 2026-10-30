@@ -6,7 +6,7 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–8 Completed: Multi-Device SOS Relay Network)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–9 Completed: Emergency Contact Management & SOS Notifications)**
 
 ---
 
@@ -14,7 +14,7 @@
 
 **RescueLink** is a mission-critical, offline-first mobile emergency distress response system. During major natural disasters (earthquakes, cyclones, floods), wilderness expeditions, or catastrophic power grid collapse, cellular infrastructure and commercial internet services often fail entirely.
 
-RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend.
+RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence** and an automated **multi-channel emergency contact notification pipeline**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend, which automatically dispatches distress alerts via Email (SMTP) and SMS (Twilio) to designated emergency contacts.
 
 ---
 
@@ -22,7 +22,7 @@ RescueLink bridges this communication gap through a **multi-device Bluetooth Low
 
 > [!IMPORTANT]
 > **RescueLink is an academic engineering project.**
-> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, and durable offline SQLite storage, it is **NOT certified by government public safety answering points (PSAPs)**.
+> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, durable offline SQLite storage, and multi-channel notifications, it is **NOT certified by government public safety answering points (PSAPs)**.
 > - This software is **NOT a replacement for certified 911, 112, or local emergency dispatch hotlines**.
 > - In an active emergency where cellular networks or landlines are available, always contact official emergency services immediately.
 
@@ -38,11 +38,12 @@ RescueLink bridges this communication gap through a **multi-device Bluetooth Low
 | **Alert Management** | Atomic JSON File Storage + REST API | Concurrency-safe incident management & validation | ✅ Completed (Step 3) |
 | **BLE Central (Receiver)** | `react-native-ble-plx` | Scanning, GATT service discovery, SOS message reading | ✅ Completed (Step 4) |
 | **BLE Peripheral (Sender)** | `react-native-ble-peripheral` | Custom GATT server hosting & beacon advertising | ✅ Completed (Step 4) |
-| **Local Storage** | `expo-sqlite` (v15.1.4) | Offline WAL persistence, schema migrations, receipts & outbox | ✅ Completed (Step 5) |
+| **Local Storage** | `expo-sqlite` (v15.1.4) | Offline WAL persistence, schema migrations (v1-v4), outbox & contacts | ✅ Completed (Steps 5, 8 & 9) |
 | **Connectivity & NetInfo** | `@react-native-community/netinfo` (v11.4.1) | Live network monitoring & internet reachability verification | ✅ Completed (Step 6) |
 | **Cloud Synchronization** | Opportunistic Sync Engine + Express REST | Outbox batch processing, exponential backoff, & BLE relay attribution | ✅ Completed (Step 6) |
-| **System Integration** | End-to-End Relay + Security Audit + 35 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
+| **System Integration** | End-to-End Relay + Security Audit + 44 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
 | **Multi-Device SOS Relay** | Controlled BLE Epidemic Mesh Forwarding | Multi-hop routing (A -> B -> C), hop limits, tamper hash, TTL & rate limits | ✅ Completed (Step 8) |
+| **Emergency Contacts & Notifications**| SMTP Email + Twilio SMS + SQLite Tasks | Multi-channel dispatch, priority sorting, location consent gate & idempotency | ✅ Completed (Step 9) |
 | **Location & Maps** | GPS + Google Maps API | Real-time coordinate lock & spatial visualization | ✅ Completed (Step 1, optional) |
 | **Cryptographic E2EE** | Curve25519 / X25519 Asymmetric Encryption | End-to-end encryption of sensitive characteristic details | ⏳ Planned (Next Phase) |
 
@@ -69,9 +70,11 @@ c:\Offline Emergency SOS/
 │       │   └── index.js
 │       ├── screens/                   # Core application screens
 │       │   ├── HomeScreen.js          # Emergency dashboard with live subsystem sensors
-│       │   ├── SendSOSScreen.js       # SOS composer, offline draft, & BLE broadcaster
+│       │   ├── SendSOSScreen.js       # SOS composer, offline draft, BLE broadcaster & contacts preview
 │       │   ├── NearbyDevicesScreen.js # BLE receiver, SOS reader, ACK sender, & relay forwarder
 │       │   ├── EmergencyHistoryScreen.js # SQLite-backed persistent ledger & mesh relay hub
+│       │   ├── EmergencyContactsScreen.js # Step 9: Emergency contacts manager (Priority, Add/Edit)
+│       │   ├── NotificationHistoryScreen.js # Step 9: Multi-channel delivery logs & test gateway
 │       │   ├── LoginScreen.js         # Responder JWT authentication
 │       │   ├── RegisterScreen.js      # Account registration screen
 │       │   ├── ProfileScreen.js       # Mesh relay settings, anonymous Node ID & gateway config
@@ -81,13 +84,15 @@ c:\Offline Emergency SOS/
 │       │   └── index.js
 │       ├── context/
 │       │   └── AuthContext.js         # JWT auth state provider & AsyncStorage sync
-│       ├── database/                  # SQLite Persistence Subsystem (Steps 5, 6 & 8)
+│       ├── database/                  # SQLite Persistence Subsystem (Steps 5, 6, 8 & 9)
 │       │   ├── database.js            # SQLite connection, PRAGMA WAL, & lifecycle
-│       │   ├── migrations.js          # Versioned schema migrations runner (v1, v2 & v3)
+│       │   ├── migrations.js          # Versioned schema migrations runner (v1 to v4)
 │       │   ├── alertRepository.js     # SOS alert CRUD, upsert, and multi-source queries
 │       │   ├── receiptRepository.js   # Message delivery & ACK receipts with atomic transactions
 │       │   ├── syncQueueRepository.js # Offline outbox queue with deduplication & retry backoff
 │       │   ├── relayRepository.js     # Step 8 Relay history audit log & aggregate stats
+│       │   ├── contactRepository.js   # Step 9 SQLite storage for emergency contacts
+│       │   ├── notificationRepository.js # Step 9 SQLite tracking for notification tasks
 │       │   └── index.js               # Central database export
 │       ├── services/                  # Business & hardware services
 │       │   ├── bluetooth/             # Bluetooth Low Energy Subsystem (Step 4)
@@ -101,10 +106,12 @@ c:\Offline Emergency SOS/
 │       │   ├── relay/                 # Multi-Device Mesh Relay Subsystem (Step 8)
 │       │   │   ├── relaySettings.js   # Relay enable toggle, max hops, anonymous node ID
 │       │   │   └── relayService.js    # Multi-hop admission pipeline, loop prevention & forward engine
+│       │   ├── notification/          # Step 9 Notification Queue Subsystem
+│       │   │   └── notificationQueueService.js # Offline local task enqueuing & cloud sync
 │       │   ├── network/               # Network Connectivity Subsystem (Step 6)
 │       │   │   └── networkService.js  # Live NetInfo monitor & reachability checker
 │       │   ├── api/
-│       │   │   └── apiClient.js       # REST client with syncAlerts batch ingestion
+│       │   │   └── apiClient.js       # REST client with syncAlerts & contacts API
 │       │   └── sync/                  # Cloud Synchronization Engine (Step 6)
 │       │       └── syncService.js     # Opportunistic outbox sync & exponential backoff
 │       └── utils/
@@ -113,33 +120,48 @@ c:\Offline Emergency SOS/
 │           └── helpers.js             # Formatter functions (coords, dates, IDs)
 ├── server/
 │   ├── config/
-│   │   └── env.js                     # Validated environment loader
+│   │   └── env.js                     # Validated environment loader with notification configs
+│   ├── validators/                    # Request payload validation
+│   │   └── contact.validator.js       # Step 9 Phone, email, name, & priority validation
 │   ├── controllers/
 │   │   ├── health.controller.js       # Health check controller
 │   │   ├── auth.controller.js         # Register, Login, & Profile controllers
-│   │   └── alert.controller.js        # Alert CRUD, status, & validation controllers
+│   │   ├── alert.controller.js        # Alert CRUD, status, & validation controllers
+│   │   ├── contact.controller.js      # Step 9 Emergency contacts CRUD controller
+│   │   └── notification.controller.js # Step 9 Notification history & test controller
 │   ├── middleware/
 │   │   ├── auth.middleware.js         # JWT verification & senderId attachment
 │   │   ├── error.middleware.js        # Central Express error handler
 │   │   └── notFound.middleware.js     # Standardized 404 handler
 │   ├── data/                          # Atomic Server Persistence
 │   │   ├── users.json                 # Thread-safe atomic JSON user store
-│   │   └── alerts.json                # Concurrency-locked atomic JSON alert store
+│   │   ├── alerts.json                # Concurrency-locked atomic JSON alert store
+│   │   ├── contacts.json              # Step 9 Thread-safe atomic contacts store
+│   │   └── notifications.json         # Step 9 Delivery audit logs store
 │   ├── routes/
 │   │   ├── health.routes.js           # GET /api/health route
 │   │   ├── auth.routes.js             # /api/auth routes
 │   │   ├── alert.routes.js            # /api/alerts routes
+│   │   ├── contact.routes.js          # Step 9 /api/contacts routes
+│   │   ├── notification.routes.js     # Step 9 /api/notifications routes
 │   │   └── index.js                   # Central route aggregator
 │   ├── services/
 │   │   ├── storage.service.js         # Atomic mutex file write utility
 │   │   ├── alert.service.js           # Alert domain logic & sync ingestion
-│   │   └── alertStore.js              # Idempotent storage with relay metadata
+│   │   ├── alertStore.js              # Idempotent storage with relay metadata
+│   │   ├── contactStore.js            # Step 9 Thread-safe contact repository
+│   │   ├── notificationStore.js       # Step 9 Task persistence & idempotency tracking
+│   │   └── notification/              # Step 9 Multi-channel notification engine
+│   │       ├── notificationService.js # Message formatter, consent check & dispatch coordinator
+│   │       └── providers/             # Delivery providers
+│   │           ├── emailProvider.js   # SMTP (Nodemailer) & simulated fallback
+│   │           └── smsProvider.js     # Twilio SMS & simulated fallback
 │   ├── .env                           # Local environment configuration
 │   ├── .env.example                   # Environment variable template
 │   ├── package.json                   # Server dependencies & scripts
 │   └── server.js                      # Express application entry point
 ├── tests/
-│   ├── run-all-tests.mjs              # Unified 35-scenario automated test runner
+│   ├── run-all-tests.mjs              # Unified 44-scenario automated test runner
 │   └── run-step6-sync-tests.mjs       # Step 6 outbox & sync regression tests
 ├── docs/
 │   ├── architecture.md                # System design & multi-hop BLE mesh specs
@@ -594,8 +616,9 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
 ### 2. Send SOS Screen (Sender Workflow)
 - **Category Picker**: Medical Emergency, Accident, Personal Safety, Fire, Other, and **Test / Drill**.
 - **Safe Drill Mode**: Clearly marked `Test / Drill` option allows realistic offline simulations without triggering false emergency dispatch.
-- **Optional GPS Location**: User-consented coordinate acquisition with privacy safeguards.
-- **Immediate SQLite Persistence**: Alert is saved locally in SQLite **before** any network attempt.
+- **Optional GPS Location & Consent**: User-consented coordinate acquisition with privacy safeguards and explicit **Location Sharing Consent toggle** determining whether clickable Google Maps URLs are included in emergency contact dispatches.
+- **Emergency Contacts Notification Preview**: Live counter displaying how many active emergency contacts will receive automated Email / SMS notifications upon transmission, with a quick navigation shortcut to manage contacts.
+- **Immediate SQLite Persistence**: Alert is saved locally in SQLite **before** any network attempt, and notification tasks are queued in `notification_tasks` table.
 - **Online vs. Offline Dispatch**:
   - If online, submits to `POST /api/alerts` and marks record `syncStatus = 'synced'`.
   - If offline, saves local draft and queues `operation: 'CREATE'` in `sync_queue` outbox.
@@ -626,8 +649,23 @@ RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)*
 - **Pull-to-Refresh**: Synchronizes with cloud backend if online, preserving local state.
 - **Inspect Audit Metadata**: Expandable technical view showing untruncated UUIDs, SQLite row IDs, last update timestamps, and receipt audit trails.
 
-### 5. Profile & Gateway Settings Screen
+### 5. Emergency Contacts Screen (Step 9)
+- **Contact Priority Hierarchy**: Grouped and color-coded by urgency: `Primary (Priority 1)` (red/coral), `Secondary (Priority 2)` (amber), and `Standard (Priority 3)` (sky blue).
+- **Local SQLite Storage & Cloud Sync**: Seamlessly saves to local SQLite `contacts` table and mirrors to `/api/contacts` when online.
+- **Add & Edit Modal**: Validates full name (2–60 chars), phone number (7–15 digits), email (RFC format), relationship category, and priority level.
+- **Mute / Enable Toggle**: Instantly enable or mute individual contacts without deleting them.
+- **Privacy First**: Explicit user input only; never requests or accesses the device's native address book.
+
+### 6. Notification History Screen (Step 9)
+- **Multi-Channel Delivery Audit**: Real-time status logs for all Email and SMS dispatches (`queued`, `sending`, `sent`, `delivered`, `failed`).
+- **Channel Filters**: Quick filter chips for `All Channels`, `✉️ Email`, and `💬 SMS`.
+- **Test Gateway Modal**: Interactive diagnostic tool allowing responders to verify SMTP and Twilio provider connectivity before field deployment.
+- **Pull-to-Refresh**: Fetches latest provider delivery updates from the central cloud backend.
+
+### 7. Profile & Gateway Settings Screen
 - **Responder Session**: JWT authentication status, registration timestamp, and token metadata.
+- **Emergency Shortcuts**: One-tap navigation portals to Emergency Contacts and Notification Logs.
+- **Multi-Device Relay Settings**: Toggle mesh relay participation, configure maximum hop limits (1–5 hops), view anonymous Node ID, and inspect forwarded/received/dropped relay metrics.
 - **Server Gateway Configuration**: Real-time configuration of the backend API URL (supports Android emulators `10.0.2.2`, physical devices over LAN IP, and localhost).
 - **Interactive Gateway Health Check**: One-tap "Test Connection" button calling `/api/health`.
 - **Security & Privacy Transparency**: Summarizes cryptographic token isolation, 512 MTU bounds, and peer relay attribution.
@@ -724,9 +762,68 @@ For evaluating real peer-to-peer BLE transmission, Bluetooth permissions, and of
 
 ---
 
+---
+
+## 🚨 Emergency Contact Management & Multi-Channel SOS Notifications (Step 9)
+
+```mermaid
+graph TD
+    subgraph Client ["RescueLink Mobile Client"]
+        User["User Initiates SOS"] --> Composer["Send SOS Screen"]
+        Composer --> Consent{"Location Consent<br/>Granted?"}
+        Consent -- Yes --> MapLink["Attach Google Maps URL<br/>(lat/lon)"]
+        Consent -- No --> NoMap["Omit Maps Link<br/>('Location omitted')"]
+        Composer --> SQLiteAlert[("SQLite: alerts")]
+        Composer --> SQLiteNotif[("SQLite: notification_tasks<br/>(status: 'queued')")]
+    end
+
+    subgraph SyncGate ["Transport & Synchronization"]
+        SQLiteAlert --> NetDecision{"Internet Available?"}
+        NetDecision -- "Offline (BLE Mesh)" --> MeshRelay["Multi-Hop BLE Relay<br/>(Devices A -> B -> C)"]
+        NetDecision -- "Online / Synced" --> CloudAPI["POST /api/alerts<br/>or POST /api/alerts/sync"]
+        MeshRelay -. "Sync when reachable" .-> CloudAPI
+    end
+
+    subgraph Backend ["RescueLink Express Backend"]
+        CloudAPI --> NotifService["NotificationService Engine"]
+        NotifService --> ContactStore[("Contacts Store<br/>(Enabled & Priority Sorted)")]
+        NotifService --> IdempCheck{"Idempotency Key Exists?<br/>(alertId:contactId:channel)"}
+        IdempCheck -- "Already Processed" --> Skip["Suppress Duplicate"]
+        IdempCheck -- "New Task" --> Dispatch["Async Non-Blocking Dispatch"]
+        Dispatch --> EmailProv["Email Provider<br/>(SMTP / Simulated)"]
+        Dispatch --> SMSProv["SMS Provider<br/>(Twilio / Simulated)"]
+        EmailProv --> EmailDest["Emergency Contact Inbox"]
+        SMSProv --> SMSDest["Emergency Contact Phone"]
+        Dispatch --> NotifStore[("Notifications Store<br/>(status: 'sent', providerId)")]
+    end
+```
+
+### 1. Notification Channels & Configuration
+RescueLink supports real email (via SMTP / Nodemailer) and real SMS (via Twilio), with automatic graceful fallback to simulated test dispatch when external credentials are not present:
+
+| Channel | Production Technology | Configuration Variables | Simulated Fallback Behavior |
+|---|---|---|---|
+| **Email** | SMTP / Nodemailer | `EMAIL_NOTIFICATIONS_ENABLED=true`<br/>`SMTP_HOST=smtp.gmail.com`<br/>`SMTP_PORT=587`<br/>`SMTP_USER=alerts@rescuelink.org`<br/>`SMTP_PASS=app_password`<br/>`SMTP_FROM=alerts@rescuelink.org` | If `SMTP_USER` is empty, activates `simulated_smtp`, records simulated message ID (`sim-email-...`), and logs formatted email to server console. |
+| **SMS** | Twilio Messaging API | `SMS_NOTIFICATIONS_ENABLED=true`<br/>`TWILIO_ACCOUNT_SID=AC...`<br/>`TWILIO_AUTH_TOKEN=...`<br/>`TWILIO_FROM_PHONE=+1...` | If `TWILIO_ACCOUNT_SID` is empty, activates `simulated_twilio`, records simulated SID (`sim-sms-...`), and logs SMS message to console. |
+
+### 2. Location Sharing Consent Gate
+- Responders retain full control over geolocation privacy.
+- When GPS coordinates are present, the **Location Sharing Consent** toggle governs notification output.
+- **Consent Granted (`locationConsent: true`)**: Automated emails and SMS include direct Google Maps links:
+  `https://maps.google.com/?q=37.7749,-122.4194`
+- **Consent Withheld (`locationConsent: false`)**: Coordinate URLs are omitted from message bodies and replaced with:
+  `"Location: Omitted by sender or unavailable."`
+
+### 3. SQLite Schema Migration v4
+Adds persistent offline storage for contacts and delivery task audits:
+- **`contacts`**: `contactId`, `userId`, `name`, `phone`, `email`, `relationship`, `priority`, `isEnabled`, `syncStatus`, `createdAt`, `updatedAt`.
+- **`notification_tasks`**: `taskId`, `alertId`, `contactId`, `contactName`, `channel`, `recipient`, `status`, `retryCount`, `errorMessage`, `createdAt`, `updatedAt`.
+
+---
+
 ## 🧪 Automated Verification & Test Results
 
-The project includes an end-to-end automated integration test suite covering all 5 core modules:
+The project includes an end-to-end automated integration test suite covering all 7 core subsystem modules:
 
 ```bash
 # Run complete test suite from repository root:
@@ -736,7 +833,7 @@ node tests/run-all-tests.mjs
 cd server && npm test
 ```
 
-### Verified Test Suite (25/25 Passing)
+### Verified Test Suite (44/44 Passing)
 
 | Test Module | Test Scenario | Result |
 |---|---|---|
@@ -754,7 +851,7 @@ cd server && npm test
 | **Module 3: BLE Protocol & Sanitization** | Serializes SOS_ALERT to Base64 and enforces 512-byte MTU limit [Hardware Mocked] | **PASS** |
 | | Strictly strips sensitive credentials (JWT, passwords, hashes) on serialize/deserialize | **PASS** |
 | | Safely handles malformed JSON and corrupted Base64 strings without throwing errors | **PASS** |
-| **Module 4: SQLite Offline Persistence** | Migrations v1 and v2 apply idempotently and create all tables and indexes | **PASS** |
+| **Module 4: SQLite Offline Persistence** | Migrations v1 to v4 apply idempotently and create all tables and indexes | **PASS** |
 | | Persists alert with distinct delivery, ack, and sync states | **PASS** |
 | | Duplicate prevention updates existing alert without creating duplicate rows | **PASS** |
 | | Recording message receipt atomically updates `alerts.ackStatus` to "acknowledged" | **PASS** |
@@ -765,6 +862,25 @@ cd server && npm test
 | | Partial batch failures reject bad items without failing valid ones | **PASS** |
 | | End-to-end sync flushes outbox, deletes queue row, and marks SQLite alert "synced" | **PASS** |
 | | Authentication expiration (401) preserves local outbox items without deleting | **PASS** |
+| **Module 6: Multi-Device SOS Relay** | Serializes valid relay SOS_ALERT with hop count, integrity hash, and under 512 MTU | **PASS** |
+| | Integrity verification detects modified distress details or coordinates | **PASS** |
+| | Rejects expired alerts (past TTL) and records DROPPED event in SQLite | **PASS** |
+| | Deduplicates repeated alerts and prevents double-forwarding | **PASS** |
+| | Enforces maximum hop count (hopCount >= maxHops) and suppresses forward | **PASS** |
+| | Prevents relay loops from own node or previous forwarder | **PASS** |
+| | Relay disabled setting saves locally for personal triage & cloud sync but drops forward | **PASS** |
+| | Rate limiting throttles rapid sequential forward broadcasts | **PASS** |
+| | SQLite Migration v3 persists relay_history and reports accurate aggregate stats | **PASS** |
+| | Three-Device Multi-Hop Simulation (A -> B -> C) synchronizes to Cloud backend | **PASS** |
+| **Module 7: Emergency Contacts & Notifications** | Input validation rejects invalid names, phones, emails, and priorities | **PASS** |
+| | User 1 creates and lists emergency contacts with priority ordering (Primary before Secondary) | **PASS** |
+| | User 1 updates contact details and toggles enabled state | **PASS** |
+| | Ownership isolation prevents User 2 from viewing, updating, or deleting User 1 contacts | **PASS** |
+| | User 1 successfully deletes contact with 200 OK | **PASS** |
+| | Message formatting enforces explicit location consent and credential scrubbing | **PASS** |
+| | SOS alert creation dispatches notifications to enabled contacts with idempotency | **PASS** |
+| | Mobile SQLite Migration v4 creates contacts and notification_tasks tables | **PASS** |
+| | Notification history queries isolate records by user and support test dispatch | **PASS** |
 
 ---
 
@@ -820,10 +936,26 @@ cd server && npm test
   - Complete security audit: credential stripping, strict 512-byte MTU limit, sanitized errors, no secrets committed
   - Unified automated test suite with 25 passing test scenarios (`npm test`)
   - Two-device physical testing guide covering 10 manual validation scenarios
+- [x] **Step 8: Multi-Device SOS Relay Network** (Completed)
+  - Epidemic multi-device BLE forwarding architecture ($A \to B \to C \to \text{Cloud}$)
+  - Protocol Version 2: hop count, maximum hops limit, TTL expiration, deterministic 32-bit FNV-1a content integrity hash
+  - Relay admission engine: tampering detection, loop prevention (own node and previous forwarder), rate limiting (sliding window), duplicate suppression
+  - SQLite Migration v3: added relay columns (`hopCount`, `maxHops`, `forwarderId`, `expiresAt`, `relayStatus`, `integrityHash`) and `relay_history` audit table
+  - Mobile UI: Multi-hop badge in History, relay metrics in Profile, interactive hop limit picker (1–5 hops)
+- [x] **Step 9: Emergency Contact Management & SOS Notifications** (Completed)
+  - Emergency contact management (CRUD, priority ordering [1-Primary, 2-Secondary, 3-Standard], active/muted toggle, strict user ownership isolation)
+  - Input validation: phone number (7-15 digits E.164 compatible), email address (RFC format), name length (2-60 chars) without unauthorized native address book access
+  - Multi-channel notification dispatch pipeline: Email (SMTP / Nodemailer) and SMS (Twilio), with automatic graceful fallback to simulated test dispatch
+  - Privacy safeguards: explicit user Location Sharing Consent toggle governing whether clickable Google Maps URLs are attached to emergency notifications
+  - Non-blocking asynchronous dispatch: SOS creation and cloud synchronization never fail due to notification gateway delays
+  - Idempotent task queue: `${alertId}:${contactId}:${channel}` prevents duplicate notification dispatches
+  - SQLite Migration v4: created `contacts` and `notification_tasks` tables for offline tracking
+  - Mobile screens: Emergency Contacts manager with Add/Edit modal, Notification History log viewer with live delivery status, and Send SOS contact preview
+  - Comprehensive automated integration tests: Module 7 (9 tests, 44/44 total passing across test suite)
 - [ ] **Future Enhancements (Post-Prototype)**
-  - Multi-hop mesh flood routing across 3+ peers
   - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
   - Live GIS interactive distress feed for emergency operations command centers
+
 
 ---
 

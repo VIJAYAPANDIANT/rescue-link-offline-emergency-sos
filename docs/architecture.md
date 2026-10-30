@@ -183,9 +183,98 @@ RescueLink uses version-tracked migrations applied via `PRAGMA user_version`:
 
 ---
 
-## 7. Comprehensive Automated Test Matrix (35 Tests)
+## 7. Emergency Contact Management & Multi-Channel SOS Notifications (Step 9)
 
-The test runner (`tests/run-all-tests.mjs`) exercises all 6 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
+```mermaid
+graph TD
+    subgraph Client ["RescueLink Mobile Client"]
+        User["User Initiates SOS"] --> Composer["Send SOS Screen"]
+        Composer --> Consent{"Location Sharing<br/>Consent Granted?"}
+        Consent -- Yes --> MapLink["Attach Google Maps URL<br/>(lat/lon)"]
+        Consent -- No --> NoMap["Omit Maps Link<br/>('Location omitted')"]
+        Composer --> SQLiteAlert[("SQLite: alerts")]
+        Composer --> SQLiteNotif[("SQLite: notification_tasks<br/>(status: 'queued')")]
+    end
+
+    subgraph SyncGate ["Transport & Synchronization"]
+        SQLiteAlert --> NetDecision{"Internet Available?"}
+        NetDecision -- "Offline (BLE Mesh)" --> MeshRelay["Multi-Hop BLE Relay<br/>(Devices A -> B -> C)"]
+        NetDecision -- "Online / Synced" --> CloudAPI["POST /api/alerts<br/>or POST /api/alerts/sync"]
+        MeshRelay -. "Sync when reachable" .-> CloudAPI
+    end
+
+    subgraph Backend ["RescueLink Express Backend"]
+        CloudAPI --> NotifService["NotificationService Engine"]
+        NotifService --> ContactStore[("Contacts Store<br/>(Enabled & Priority Sorted)")]
+        NotifService --> IdempCheck{"Idempotency Key Exists?<br/>(alertId:contactId:channel)"}
+        IdempCheck -- "Already Processed" --> Skip["Suppress Duplicate"]
+        IdempCheck -- "New Task" --> Dispatch["Async Non-Blocking Dispatch"]
+        Dispatch --> EmailProv["Email Provider<br/>(SMTP / Simulated)"]
+        Dispatch --> SMSProv["SMS Provider<br/>(Twilio / Simulated)"]
+        EmailProv --> EmailDest["Emergency Contact Inbox"]
+        SMSProv --> SMSDest["Emergency Contact Mobile Phone"]
+        Dispatch --> NotifStore[("Notifications Store<br/>(status: 'sent', providerId)")]
+    end
+```
+
+### 7.1 Emergency Contact Schema & Priority Tiers
+Contacts are defined with:
+- `id` / `contactId`: Unique identifier (UUID).
+- `userId`: Authenticated user ID (strict ownership isolation; cross-user lookups return 404).
+- `name`: 2–60 characters.
+- `phone`: Clean numeric 7–15 digit string (E.164 compatible).
+- `email`: Standard RFC format.
+- `relationship`: Descriptive category (e.g., Spouse, Parent, Doctor, Colleague).
+- `priority`:
+  - `1`: **Primary** (High urgency, first in dispatch order).
+  - `2`: **Secondary** (Medium urgency).
+  - `3`: **Standard** (Informational contact).
+- `isEnabled`: Boolean flag allowing users to mute notifications without deleting the contact record.
+
+### 7.2 Non-Blocking SOS Dispatch & Idempotency
+- **Non-Blocking**: Creating or syncing an SOS alert **never fails** if an external notification provider (SMTP or Twilio) throws an error or times out. Dispatches run as background asynchronous promises.
+- **Idempotency Key**: Generated as `${alertId}:${contactId}:${channel}`. Prevents repeated notification dispatches when an alert is re-synced from multiple relay paths.
+- **Simulated Provider Fallback**: If `SMTP_USER` or `TWILIO_ACCOUNT_SID` are absent from `.env`, providers automatically operate in `simulated` mode, logging realistic message delivery payloads and provider IDs (`sim-email-...` / `sim-sms-...`) without crashing.
+
+### 7.3 SQLite Schema Migration v4
+Adds dedicated tables for contacts and local notification task auditing:
+```sql
+CREATE TABLE IF NOT EXISTS contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contactId TEXT UNIQUE NOT NULL,
+  userId TEXT,
+  name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  relationship TEXT DEFAULT 'Emergency Contact',
+  priority INTEGER NOT NULL DEFAULT 1 CHECK(priority BETWEEN 1 AND 3),
+  isEnabled INTEGER NOT NULL DEFAULT 1 CHECK(isEnabled IN (0, 1)),
+  syncStatus TEXT NOT NULL DEFAULT 'synced' CHECK(syncStatus IN ('synced', 'pending_create', 'pending_update', 'pending_delete')),
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notification_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  taskId TEXT UNIQUE NOT NULL,
+  alertId TEXT NOT NULL,
+  contactId TEXT,
+  contactName TEXT,
+  channel TEXT NOT NULL CHECK(channel IN ('email', 'sms', 'push')),
+  recipient TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'sending', 'sent', 'delivered', 'failed')),
+  retryCount INTEGER NOT NULL DEFAULT 0,
+  errorMessage TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+```
+
+---
+
+## 8. Comprehensive Automated Test Matrix (44 Tests)
+
+The test runner (`tests/run-all-tests.mjs`) exercises all 7 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
 
 1. **Module 1**: Authentication, JWT & Security (6 tests)
 2. **Module 2**: Emergency Alert REST API & Validation (5 tests)
@@ -193,13 +282,14 @@ The test runner (`tests/run-all-tests.mjs`) exercises all 6 core subsystems in p
 4. **Module 4**: SQLite Offline Persistence & Migrations v1–v3 (4 tests)
 5. **Module 5**: Offline Outbox & Cloud Synchronization (7 tests)
 6. **Module 6**: Multi-Device SOS Relay Network (10 tests)
-   - Valid relay message serialization & integrity hashing
-   - Content tampering detection via checksum mismatch
-   - Expiration / TTL rejection
-   - Duplicate alert detection & idempotency
-   - Maximum hop count enforcement
-   - Loop prevention (own-origin and previous forwarder)
-   - Relay disabled setting enforcement
-   - Sliding-window rate limiting
-   - SQLite relay-history persistence & aggregate stats
-   - Three-device multi-hop simulation with backend cloud sync
+7. **Module 7**: Emergency Contact Management & SOS Notifications (9 tests)
+   - Input validation (name, phone, email, priority boundaries)
+   - User 1 contact creation and priority sorting (Primary before Secondary)
+   - Contact detail updates and enabled toggle filtering
+   - Ownership isolation (User 2 receives 404 attempting to view/modify User 1 contacts)
+   - Contact deletion
+   - Location sharing consent gate (Google Maps link present only when consent granted)
+   - Credential scrubbing (zero tokens, passwords, or secrets in notification text)
+   - Automated non-blocking notification dispatch on SOS alert creation with idempotency
+   - Mobile SQLite Migration v4 verification (`contacts` & `notification_tasks` tables)
+   - Notification history API queries with user isolation and test dispatch endpoint

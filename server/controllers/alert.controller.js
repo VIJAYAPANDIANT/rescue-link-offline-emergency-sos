@@ -14,7 +14,7 @@ const alertService = require('../services/alert.service');
 const createAlert = async (req, res, next) => {
   try {
     const senderId = req.user.id;
-    const { emergencyType, details, contactDetails, location } = req.body;
+    const { emergencyType, details, contactDetails, location, locationConsent } = req.body;
 
     const alert = await alertService.createAlert({
       senderId,
@@ -22,6 +22,7 @@ const createAlert = async (req, res, next) => {
       details,
       contactDetails,
       location,
+      locationConsent,
     });
 
     return res.status(201).json({

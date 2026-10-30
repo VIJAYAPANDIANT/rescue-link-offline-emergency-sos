@@ -17,7 +17,8 @@ import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
 import { locationService } from '../services/location/locationService';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
-import { AlertRepository, ReceiptRepository, SyncQueueRepository } from '../database';
+import { AlertRepository, ReceiptRepository, SyncQueueRepository, ContactRepository } from '../database';
+import { notificationQueueService } from '../services/notification/notificationQueueService';
 import { EmergencyTypeSelector } from '../components/EmergencyTypeSelector';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
@@ -48,9 +49,11 @@ export const SendSOSScreen = ({ navigation, route }) => {
 
   // Location State
   const [includeLocation, setIncludeLocation] = useState(false);
+  const [locationConsent, setLocationConsent] = useState(true);
   const [locationStatus, setLocationStatus] = useState('Location omitted by user');
   const [acquiredCoords, setAcquiredCoords] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [enabledContactsCount, setEnabledContactsCount] = useState(0);
 
   // BLE Broadcast State
   const [isAdvertising, setIsAdvertising] = useState(false);
@@ -64,6 +67,13 @@ export const SendSOSScreen = ({ navigation, route }) => {
       bluetoothService.stopAdvertisingSOS();
     };
   }, []);
+
+  // Refresh enabled contacts count
+  useEffect(() => {
+    ContactRepository.getEnabledContacts(user?.id)
+      .then((contacts) => setEnabledContactsCount(contacts.length))
+      .catch(() => setEnabledContactsCount(0));
+  }, [user]);
 
   // Update contactName when user logs in
   useEffect(() => {
@@ -136,6 +146,7 @@ export const SendSOSScreen = ({ navigation, route }) => {
       details: details.trim() || undefined,
       contactDetails: contactStr || undefined,
       location: includeLocation && acquiredCoords ? acquiredCoords : null,
+      locationConsent: includeLocation && locationConsent,
     };
 
     const localAlertId = generateDraftId();
@@ -164,6 +175,8 @@ export const SendSOSScreen = ({ navigation, route }) => {
     // 1. Immediately persist to SQLite database (Offline-first guarantee)
     try {
       await AlertRepository.saveOrUpdateAlert(baseAlertRecord);
+      // Enqueue notification tasks locally for offline tracking
+      await notificationQueueService.queueLocalNotificationTasks(baseAlertRecord, user);
     } catch (dbErr) {
       console.warn('[SendSOSScreen] SQLite initial save warning:', dbErr.message);
     }
@@ -539,12 +552,28 @@ export const SendSOSScreen = ({ navigation, route }) => {
                 </View>
 
                 {includeLocation && acquiredCoords ? (
-                  <View style={styles.coordsBox}>
-                    <Text style={styles.coordsText}>
-                      Coordinates: {acquiredCoords.latitude.toFixed(4)}° N,{' '}
-                      {acquiredCoords.longitude.toFixed(4)}° E
-                    </Text>
-                  </View>
+                  <>
+                    <View style={styles.coordsBox}>
+                      <Text style={styles.coordsText}>
+                        Coordinates: {acquiredCoords.latitude.toFixed(4)}° N,{' '}
+                        {acquiredCoords.longitude.toFixed(4)}° E
+                      </Text>
+                    </View>
+                    <View style={styles.consentRow}>
+                      <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                        <Text style={styles.consentTitle}>Share Google Maps Link</Text>
+                        <Text style={styles.consentSubtitle}>
+                          Include clickable map link in SMS/Email to emergency contacts
+                        </Text>
+                      </View>
+                      <Switch
+                        value={locationConsent}
+                        onValueChange={setLocationConsent}
+                        trackColor={{ false: colors.borderDark, true: colors.success }}
+                        thumbColor="#FFFFFF"
+                      />
+                    </View>
+                  </>
                 ) : null}
 
                 {includeLocation && isLocating ? (
@@ -554,6 +583,29 @@ export const SendSOSScreen = ({ navigation, route }) => {
                 <Text style={styles.locationHelper}>
                   Location is completely optional. You can safely transmit emergency dispatches without coordinates.
                 </Text>
+              </View>
+
+              {/* Emergency Contacts Notification Preview Card */}
+              <View style={[styles.contactsPreviewCard, shadows.card]}>
+                <View style={styles.contactsPreviewLeft}>
+                  <Text style={styles.contactsPreviewIcon}>👥</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.contactsPreviewTitle}>
+                      Emergency Contacts ({enabledContactsCount} active)
+                    </Text>
+                    <Text style={styles.contactsPreviewSubtitle}>
+                      {enabledContactsCount > 0
+                        ? `${enabledContactsCount} contact${enabledContactsCount === 1 ? '' : 's'} will be notified via Email / SMS.`
+                        : 'No contacts configured yet. Add trusted contacts to notify them automatically.'}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.manageContactsBtn}
+                  onPress={() => navigation.navigate('Contacts')}
+                >
+                  <Text style={styles.manageContactsBtnText}>Manage</Text>
+                </TouchableOpacity>
               </View>
 
               {/* 1. Emergency Type Selector */}
@@ -993,6 +1045,69 @@ const styles = StyleSheet.create({
   successActions: {
     marginTop: spacing.md,
     gap: spacing.sm,
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  consentTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  consentSubtitle: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  contactsPreviewCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  contactsPreviewLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  contactsPreviewIcon: {
+    fontSize: 22,
+    marginRight: spacing.sm,
+  },
+  contactsPreviewTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  contactsPreviewSubtitle: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  manageContactsBtn: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginLeft: spacing.sm,
+  },
+  manageContactsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
   },
 });
 

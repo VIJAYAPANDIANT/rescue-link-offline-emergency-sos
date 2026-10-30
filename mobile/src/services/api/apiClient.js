@@ -433,6 +433,215 @@ class ApiClient {
       };
     }
   }
+
+  /**
+   * Fetch emergency contacts for the authenticated user.
+   */
+  async getContacts() {
+    try {
+      const response = await fetch(`${this.baseUrl}/contacts`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to fetch emergency contacts.',
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        count: data.count || (data.data ? data.data.length : 0),
+        data: data.data || [],
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error fetching contacts.',
+      };
+    }
+  }
+
+  /**
+   * Create an emergency contact.
+   */
+  async createContact(contactData) {
+    try {
+      const response = await fetch(`${this.baseUrl}/contacts`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(contactData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to create emergency contact.',
+          status: response.status,
+          code: data.error?.code,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        data: data.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error creating contact.',
+      };
+    }
+  }
+
+  /**
+   * Update an existing emergency contact.
+   */
+  async updateContact(contactId, updates) {
+    try {
+      const response = await fetch(`${this.baseUrl}/contacts/${contactId}`, {
+        method: 'PATCH',
+        headers: this.getHeaders(),
+        body: JSON.stringify(updates),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to update contact.',
+          status: response.status,
+          code: data.error?.code,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        data: data.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error updating contact.',
+      };
+    }
+  }
+
+  /**
+   * Delete an emergency contact.
+   */
+  async deleteContact(contactId) {
+    try {
+      const response = await fetch(`${this.baseUrl}/contacts/${contactId}`, {
+        method: 'DELETE',
+        headers: this.getHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to delete contact.',
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error deleting contact.',
+      };
+    }
+  }
+
+  /**
+   * Fetch notification history.
+   */
+  async getNotifications({ alertId, channel, limit = 50, offset = 0 } = {}) {
+    try {
+      const queryParams = new URLSearchParams();
+      if (alertId) queryParams.append('alertId', alertId);
+      if (channel) queryParams.append('channel', channel);
+      if (limit) queryParams.append('limit', String(limit));
+      if (offset) queryParams.append('offset', String(offset));
+
+      const url = `${this.baseUrl}/notifications${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to fetch notifications.',
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        count: data.count || (data.data ? data.data.length : 0),
+        data: data.data || [],
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error fetching notifications.',
+      };
+    }
+  }
+
+  /**
+   * Send test notification.
+   */
+  async testNotification({ channel, recipient }) {
+    try {
+      const response = await fetch(`${this.baseUrl}/notifications/test`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ channel, recipient }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to send test notification.',
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        message: data.message,
+        data: data.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error sending test notification.',
+      };
+    }
+  }
 }
 
 export const apiClient = new ApiClient();

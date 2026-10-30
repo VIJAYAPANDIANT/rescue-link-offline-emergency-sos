@@ -134,6 +134,57 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 4,
+    description: 'Add contacts and notification_tasks tables for emergency contact management and SOS notifications',
+    up: async (db) => {
+      // 1. Emergency Contacts Table
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS contacts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contactId TEXT UNIQUE NOT NULL,
+          userId TEXT,
+          name TEXT NOT NULL,
+          phone TEXT,
+          email TEXT,
+          relationship TEXT DEFAULT 'Emergency Contact',
+          priority INTEGER NOT NULL DEFAULT 1 CHECK(priority BETWEEN 1 AND 3),
+          isEnabled INTEGER NOT NULL DEFAULT 1 CHECK(isEnabled IN (0, 1)),
+          syncStatus TEXT NOT NULL DEFAULT 'synced' CHECK(syncStatus IN ('synced', 'pending_create', 'pending_update', 'pending_delete')),
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_contacts_contact_id ON contacts(contactId);
+        CREATE INDEX IF NOT EXISTS idx_contacts_user_id ON contacts(userId);
+        CREATE INDEX IF NOT EXISTS idx_contacts_priority ON contacts(priority ASC);
+        CREATE INDEX IF NOT EXISTS idx_contacts_enabled ON contacts(isEnabled);
+      `);
+
+      // 2. SOS Notification Dispatch Queue Table
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS notification_tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          taskId TEXT UNIQUE NOT NULL,
+          alertId TEXT NOT NULL,
+          contactId TEXT,
+          contactName TEXT,
+          channel TEXT NOT NULL CHECK(channel IN ('email', 'sms', 'push')),
+          recipient TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'sending', 'sent', 'delivered', 'failed')),
+          retryCount INTEGER NOT NULL DEFAULT 0,
+          errorMessage TEXT,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_notif_tasks_task_id ON notification_tasks(taskId);
+        CREATE INDEX IF NOT EXISTS idx_notif_tasks_alert_id ON notification_tasks(alertId);
+        CREATE INDEX IF NOT EXISTS idx_notif_tasks_status ON notification_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_notif_tasks_created_at ON notification_tasks(createdAt DESC);
+      `);
+    },
+  },
 ];
 
 /**
