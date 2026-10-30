@@ -9,6 +9,8 @@
  * 3. Never silently overwrites corrupted files; explicit SyntaxError thrown.
  * 4. Case-insensitive email normalization.
  * 5. Password hashes are never leaked in returned safe user objects.
+ * 6. Role-based access control (role: 'admin' | 'responder' | 'user').
+ * 7. Account status flags (status: 'active' | 'suspended' | 'deactivated').
  */
 
 const fs = require('fs');
@@ -51,20 +53,26 @@ class UserStore {
    */
   toSafeUser(user) {
     if (!user) return null;
-    const { passwordHash, ...safeUser } = user;
-    return safeUser;
+    const { passwordHash, ...rest } = user;
+    return {
+      id: rest.id,
+      name: rest.name,
+      email: rest.email,
+      role: rest.role || 'user',
+      status: rest.status || 'active',
+      createdAt: rest.createdAt,
+      updatedAt: rest.updatedAt || rest.createdAt,
+    };
   }
 
   /**
    * Read and parse users.json safely.
-   * If the file is corrupted (SyntaxError), throws an explicit error rather than wiping it.
    */
   async readUsers() {
     this.ensureInitialized();
 
     const rawData = await fs.promises.readFile(USERS_FILE, 'utf8');
 
-    // Handle empty file edge-case
     if (!rawData.trim()) {
       return [];
     }
@@ -86,15 +94,13 @@ class UserStore {
   }
 
   /**
-   * Atomic write to users.json using a temp file.
-   * Serialized through a promise-based write lock to prevent race conditions.
+   * Atomic write to users.json using a temp file with Windows file-lock retry.
    */
   async writeUsers(usersList) {
     if (!Array.isArray(usersList)) {
       throw new Error('writeUsers requires an array of user objects.');
     }
 
-    // Execute within serialized write queue
     return new Promise((resolve, reject) => {
       this.writeLock = this.writeLock
         .then(async () => {
@@ -104,10 +110,24 @@ class UserStore {
           // Write payload to temporary file first
           await fs.promises.writeFile(tempFile, jsonPayload, 'utf8');
 
-          // Atomically rename temp file over destination file
-          await fs.promises.rename(tempFile, USERS_FILE);
+          // Atomically rename temp file over destination file with retry
+          let renamed = false;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              await fs.promises.rename(tempFile, USERS_FILE);
+              renamed = true;
+              break;
+            } catch (err) {
+              if ((err.code === 'EPERM' || err.code === 'EBUSY') && attempt < 4) {
+                await new Promise((r) => setTimeout(r, 25 * (attempt + 1)));
+              } else {
+                try { await fs.promises.unlink(tempFile); } catch (e) {}
+                throw err;
+              }
+            }
+          }
 
-          resolve();
+          if (renamed) resolve();
         })
         .catch((err) => {
           console.error('[UserStore] Error writing users.json:', err);
@@ -138,14 +158,8 @@ class UserStore {
 
   /**
    * Create and persist a new user record.
-   *
-   * @param {object} params
-   * @param {string} params.name
-   * @param {string} params.email
-   * @param {string} params.passwordHash
-   * @returns {Promise<object>} Safe user record
    */
-  async createUser({ name, email, passwordHash }) {
+  async createUser({ name, email, passwordHash, role = 'user', status = 'active' }) {
     const normalizedEmail = this.normalizeEmail(email);
 
     // Read current users
@@ -165,7 +179,10 @@ class UserStore {
       name: name.trim(),
       email: normalizedEmail,
       passwordHash,
+      role: ['admin', 'responder', 'user'].includes(role) ? role : 'user',
+      status: ['active', 'suspended', 'deactivated'].includes(status) ? status : 'active',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     users.push(newUser);
@@ -174,6 +191,94 @@ class UserStore {
     await this.writeUsers(users);
 
     return this.toSafeUser(newUser);
+  }
+
+  /**
+   * Update an existing user's role or status.
+   */
+  async updateUser(id, updates = {}) {
+    if (!id) return null;
+    const users = await this.readUsers();
+    const index = users.findIndex((u) => u.id === id);
+    if (index === -1) return null;
+
+    const user = users[index];
+    if (updates.role && ['admin', 'responder', 'user'].includes(updates.role)) {
+      user.role = updates.role;
+    }
+    if (updates.status && ['active', 'suspended', 'deactivated'].includes(updates.status)) {
+      user.status = updates.status;
+    }
+    if (updates.name && typeof updates.name === 'string' && updates.name.trim().length >= 2) {
+      user.name = updates.name.trim();
+    }
+    if (updates.passwordHash) {
+      user.passwordHash = updates.passwordHash;
+    }
+    user.updatedAt = new Date().toISOString();
+
+    users[index] = user;
+    await this.writeUsers(users);
+    return this.toSafeUser(user);
+  }
+
+  /**
+   * Retrieve paginated users with optional search and filters.
+   */
+  async getAllUsers({ page = 1, limit = 20, search, role, status } = {}) {
+    const users = await this.readUsers();
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+
+    let filtered = users.map((u) => this.toSafeUser(u)).filter((u) => {
+      if (role && role !== 'all' && u.role !== role) return false;
+      if (status && status !== 'all' && u.status !== status) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        const matchesName = u.name.toLowerCase().includes(q);
+        const matchesEmail = u.email.toLowerCase().includes(q);
+        const matchesId = u.id.toLowerCase().includes(q);
+        if (!matchesName && !matchesEmail && !matchesId) return false;
+      }
+      return true;
+    });
+
+    // Newest first
+    filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limitNum) || 1;
+    const startIndex = (pageNum - 1) * limitNum;
+    const paginated = filtered.slice(startIndex, startIndex + limitNum);
+
+    return {
+      users: paginated,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  /**
+   * Count users by status and total.
+   */
+  async countUsers() {
+    const users = await this.readUsers();
+    const total = users.length;
+    let active = 0;
+    let suspended = 0;
+    let admins = 0;
+
+    for (const u of users) {
+      if ((u.status || 'active') === 'active') active++;
+      if (u.status === 'suspended') suspended++;
+      if (u.role === 'admin') admins++;
+    }
+
+    return { total, active, suspended, admins };
   }
 }
 

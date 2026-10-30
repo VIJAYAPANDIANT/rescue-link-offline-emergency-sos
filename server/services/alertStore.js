@@ -246,6 +246,107 @@ class AlertStore extends EventEmitter {
   }
 
   /**
+   * Update the administrative status of an incident with reviewer audit trail.
+   * Preserves all original sender distress details, location, and transmission states.
+   *
+   * @param {string} id
+   * @param {string} newStatus
+   * @param {object} [adminInfo] { id, email }
+   * @param {string} [notes]
+   * @returns {Promise<object|null>}
+   */
+  async updateAdminStatus(id, newStatus, adminInfo = {}, notes = '') {
+    const alerts = await this.readAlerts();
+    const index = alerts.findIndex((a) => a.id === id);
+
+    if (index === -1) {
+      return null;
+    }
+
+    const previousStatus = alerts[index].status;
+    const now = new Date().toISOString();
+
+    alerts[index] = {
+      ...alerts[index],
+      status: newStatus,
+      updatedAt: now,
+      adminReview: {
+        previousStatus,
+        status: newStatus,
+        reviewedBy: adminInfo.email || 'Administrator',
+        reviewedById: adminInfo.id || null,
+        notes: typeof notes === 'string' ? notes.trim() : '',
+        reviewedAt: now,
+      },
+    };
+
+    await this.writeAlerts(alerts);
+    this.emit('alert_event', { type: 'alert_updated', alert: alerts[index] });
+    return alerts[index];
+  }
+
+  /**
+   * Retrieve paginated alerts with comprehensive search and filtering for admin dashboard.
+   */
+  async getPaginatedAlerts({
+    page = 1,
+    limit = 20,
+    search,
+    emergencyType,
+    status,
+    dateFrom,
+    dateTo,
+    hasLocation,
+  } = {}) {
+    const alerts = await this.readAlerts();
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+
+    let filtered = alerts.filter((a) => {
+      if (status && status !== 'all' && status !== 'ALL' && a.status !== status) return false;
+      if (emergencyType && emergencyType !== 'all' && a.emergencyType !== emergencyType) return false;
+      if (dateFrom && new Date(a.createdAt) < new Date(dateFrom)) return false;
+      if (dateTo && new Date(a.createdAt) > new Date(dateTo)) return false;
+      if (hasLocation === true || hasLocation === 'true') {
+        if (!a.location || typeof a.location.latitude !== 'number' || typeof a.location.longitude !== 'number') {
+          return false;
+        }
+      } else if (hasLocation === false || hasLocation === 'false') {
+        if (a.location && typeof a.location.latitude === 'number' && typeof a.location.longitude === 'number') {
+          return false;
+        }
+      }
+      if (search) {
+        const q = search.toLowerCase();
+        const matchesId = a.id && a.id.toLowerCase().includes(q);
+        const matchesSender = a.senderName && a.senderName.toLowerCase().includes(q);
+        const matchesType = a.emergencyType && a.emergencyType.toLowerCase().includes(q);
+        const matchesDetails = a.details && a.details.toLowerCase().includes(q);
+        if (!matchesId && !matchesSender && !matchesType && !matchesDetails) return false;
+      }
+      return true;
+    });
+
+    // Newest first
+    filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limitNum) || 1;
+    const startIndex = (pageNum - 1) * limitNum;
+    const paginated = filtered.slice(startIndex, startIndex + limitNum);
+
+    return {
+      incidents: paginated,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  /**
    * Retrieve all alerts with optional geographic, category, and timestamp filters.
    *
    * @param {object} [options]

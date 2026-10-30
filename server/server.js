@@ -13,8 +13,8 @@ const app = express();
 
 // Middleware: Enable Cross-Origin Resource Sharing (CORS)
 app.use(cors({
-  origin: '*', // Permissive for local mobile app development
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  origin: '*', // Permissive for local development and admin dashboard
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 

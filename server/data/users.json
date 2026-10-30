@@ -12,5 +12,15 @@
     "email": "sarah.connor@rescuelink.org",
     "passwordHash": "$2b$10$PYLyzLEIQL0Eh4A.g3PGZelN5oGp/A75nIiOXjGY3y2l4CIzUpA4e",
     "createdAt": "2026-10-28T16:41:29.369Z"
+  },
+  {
+    "id": "6c3c6c37-a698-455c-b7a9-5660a478bc32",
+    "name": "Admin Test",
+    "email": "admin@rescuelink.org",
+    "passwordHash": "$2b$10$5Lkir58ZAs4yqLRZCHnPLOBdT.GDaZ893jHCJSa4raQgh70D.dXkO",
+    "role": "admin",
+    "status": "active",
+    "createdAt": "2026-10-30T17:43:25.367Z",
+    "updatedAt": "2026-10-30T17:43:25.369Z"
   }
 ]

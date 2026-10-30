@@ -64,4 +64,54 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+/**
+ * Require Administrator Role Middleware
+ *
+ * Enforces role-based access control by verifying that the authenticated user
+ * has an active account with the 'admin' role.
+ */
+const requireAdmin = async (req, res, next) => {
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({
+      success: false,
+      error: {
+        code: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication is required to access administrator endpoints.',
+      },
+    });
+  }
+
+  try {
+    const userStore = require('../services/userStore');
+    const user = await userStore.findById(req.user.id);
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN_ADMIN_REQUIRED',
+          message: 'Access denied. Administrator privileges are required.',
+        },
+      });
+    }
+
+    if (user.status === 'suspended' || user.status === 'deactivated') {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'ACCOUNT_SUSPENDED',
+          message: 'Your administrator account has been suspended or deactivated.',
+        },
+      });
+    }
+
+    req.adminUser = userStore.toSafeUser(user);
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = authenticateToken;
+module.exports.authenticateToken = authenticateToken;
+module.exports.requireAdmin = requireAdmin;

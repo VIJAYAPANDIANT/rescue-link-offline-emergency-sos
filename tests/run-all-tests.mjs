@@ -51,6 +51,7 @@ import alertService from '../server/services/alert.service.js';
 import contactStore from '../server/services/contactStore.js';
 import notificationStore from '../server/services/notificationStore.js';
 import notificationService from '../server/services/notification/notificationService.js';
+import auditStore from '../server/services/auditStore.js';
 
 // Helper to create an in-memory SQLite wrapper conforming to expo-sqlite async interface
 function createInMemoryExpoSqliteWrapper() {
@@ -122,7 +123,7 @@ function stopEphemeralServer() {
 
 async function runComprehensiveTestSuite() {
   console.log('================================================================');
-  console.log('   RESCUELINK STEP 10 COMPREHENSIVE AUTOMATED TEST SUITE');
+  console.log('   RESCUELINK STEP 11 COMPREHENSIVE AUTOMATED TEST SUITE');
   console.log('================================================================\n');
 
   let totalPassed = 0;
@@ -148,6 +149,7 @@ async function runComprehensiveTestSuite() {
   const initialUsers = await userStore.readUsers();
   const initialContacts = await contactStore.readContacts();
   const initialNotifications = await notificationStore.readNotifications();
+  const initialAuditLogs = await auditStore.readLogs();
 
   try {
     // =========================================================================
@@ -1699,6 +1701,281 @@ async function runComprehensiveTestSuite() {
       assert.strictEqual(parsed.hostname, 'www.google.com');
       assert.strictEqual(parsed.searchParams.get('destination'), `${lat},${lon}`);
     });
+
+    // =========================================================================
+    // MODULE 9: ADMIN DASHBOARD, INCIDENT MONITORING & ANALYTICS
+    // =========================================================================
+    console.log('\n--- Module 9: Admin Dashboard, Incident Monitoring & Analytics ---');
+
+    let adminUserToken = null;
+    let adminUserId = null;
+    const adminEmail = `admin-test-${Date.now()}@rescuelink.org`;
+    const adminPassword = 'AdminSecretPass123!';
+
+    await runTest('Admin Auth & Role Restrictions: Non-admin users are rejected with 403 Forbidden', async () => {
+      // 1. Regular user tries to access /api/admin/dashboard -> 403
+      const res1 = await fetch(`${testServerBaseUrl}/admin/dashboard`, {
+        headers: { Authorization: `Bearer ${testUserToken}` },
+      });
+      assert.strictEqual(res1.status, 403, 'Regular user must be rejected with 403 Forbidden');
+      const d1 = await res1.json();
+      assert.strictEqual(d1.error.code, 'FORBIDDEN_ADMIN_REQUIRED');
+
+      // 2. Unauthenticated request -> 401
+      const res2 = await fetch(`${testServerBaseUrl}/admin/dashboard`);
+      assert.strictEqual(res2.status, 401, 'Unauthenticated request must return 401');
+    });
+
+    await runTest('Admin Login & Dashboard Overview: Authenticated administrator receives aggregated metrics', async () => {
+      // 1. Create admin user
+      const saltRounds = 10;
+      const passwordHash = await bcrypt.hash(adminPassword, saltRounds);
+      const adminUser = await userStore.createUser({
+        name: 'Lead Commander',
+        email: adminEmail,
+        passwordHash,
+        role: 'admin',
+        status: 'active',
+      });
+      adminUserId = adminUser.id;
+
+      // 2. Login as admin
+      const loginRes = await fetch(`${testServerBaseUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+      });
+      assert.strictEqual(loginRes.status, 200);
+      const loginData = await loginRes.json();
+      assert.strictEqual(loginData.user.role, 'admin');
+      adminUserToken = loginData.token;
+
+      // 3. Request dashboard overview
+      const dashRes = await fetch(`${testServerBaseUrl}/admin/dashboard`, {
+        headers: { Authorization: `Bearer ${adminUserToken}` },
+      });
+      assert.strictEqual(dashRes.status, 200);
+      const dashData = await dashRes.json();
+      assert.strictEqual(dashData.success, true);
+      assert.ok(dashData.data.summary);
+      assert.ok(typeof dashData.data.summary.totalUsers === 'number');
+      assert.ok(typeof dashData.data.summary.totalIncidents === 'number');
+      assert.ok(typeof dashData.data.summary.activeIncidents === 'number');
+      assert.ok(typeof dashData.data.summary.totalRelaysForwarded === 'number');
+      assert.ok(Array.isArray(dashData.data.timeline));
+      assert.ok(dashData.data.notificationStats);
+    });
+
+    let targetIncidentId = null;
+
+    await runTest('Incident Management: Admin updates lifecycle status and preserves original survivor details', async () => {
+      // 1. Ingest an incident as regular user
+      const createRes = await fetch(`${testServerBaseUrl}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          emergencyType: 'Medical Emergency',
+          details: 'Survivor with fracture at North Trailhead',
+          location: { latitude: 37.7749, longitude: -122.4194 },
+        }),
+      });
+      assert.strictEqual(createRes.status, 201);
+      const createData = await createRes.json();
+      targetIncidentId = (createData.data || createData.alert).id;
+
+      // 2. Admin queries paginated incidents
+      const listRes = await fetch(`${testServerBaseUrl}/admin/incidents?search=North+Trailhead`, {
+        headers: { Authorization: `Bearer ${adminUserToken}` },
+      });
+      assert.strictEqual(listRes.status, 200);
+      const listData = await listRes.json();
+      assert.ok(listData.incidents.length >= 1);
+
+      // 3. Admin updates lifecycle status to 'Investigating' with notes
+      const patchRes = await fetch(`${testServerBaseUrl}/admin/incidents/${targetIncidentId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminUserToken}`,
+        },
+        body: JSON.stringify({
+          status: 'Investigating',
+          notes: 'SAR Alpha dispatched via ATV',
+        }),
+      });
+      assert.strictEqual(patchRes.status, 200);
+      const patchData = await patchRes.json();
+      assert.strictEqual(patchData.incident.status, 'Investigating');
+      assert.strictEqual(patchData.incident.details, 'Survivor with fracture at North Trailhead', 'Original details preserved');
+      assert.strictEqual(patchData.incident.location.latitude, 37.7749, 'Original GPS location preserved');
+      assert.strictEqual(patchData.incident.adminReview.notes, 'SAR Alpha dispatched via ATV');
+
+      // 4. Unsupported status returns 400
+      const badRes = await fetch(`${testServerBaseUrl}/admin/incidents/${targetIncidentId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminUserToken}`,
+        },
+        body: JSON.stringify({ status: 'InvalidStatusString' }),
+      });
+      assert.strictEqual(badRes.status, 400);
+    });
+
+    await runTest('Administrative Audit Logs: Actions generate tamper-evident audit records without leaking secrets', async () => {
+      // 1. Fetch audit logs as admin
+      const res = await fetch(`${testServerBaseUrl}/admin/audit-logs`, {
+        headers: { Authorization: `Bearer ${adminUserToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.ok(data.logs.length >= 1);
+
+      // 2. Find the incident update audit log
+      const incidentLog = data.logs.find(
+        (l) => l.action === 'INCIDENT_STATUS_UPDATE' && l.targetId === targetIncidentId
+      );
+      assert.ok(incidentLog, 'Must record INCIDENT_STATUS_UPDATE audit log');
+      assert.strictEqual(incidentLog.adminEmail, adminEmail);
+      assert.strictEqual(incidentLog.details.newStatus, 'Investigating');
+      assert.strictEqual(incidentLog.details.notes, 'SAR Alpha dispatched via ATV');
+
+      // 3. Confirm zero secret leakage in any details field
+      for (const log of data.logs) {
+        assert.strictEqual(log.details?.password, undefined);
+        assert.strictEqual(log.details?.passwordHash, undefined);
+        assert.strictEqual(log.details?.token, undefined);
+      }
+    });
+
+    await runTest('Admin User Management & Status: Admin suspends user, preventing login; self-suspension is blocked', async () => {
+      // 1. Create a user to be suspended
+      const tempEmail = `temp-user-${Date.now()}@rescuelink.org`;
+      const tempPass = 'Password123!';
+      const hash = await bcrypt.hash(tempPass, 10);
+      const tempUser = await userStore.createUser({
+        name: 'Field Responder Dan',
+        email: tempEmail,
+        passwordHash: hash,
+        role: 'user',
+        status: 'active',
+      });
+
+      // 2. Admin retrieves user list
+      const listRes = await fetch(`${testServerBaseUrl}/admin/users?search=${tempEmail}`, {
+        headers: { Authorization: `Bearer ${adminUserToken}` },
+      });
+      assert.strictEqual(listRes.status, 200);
+      const listData = await listRes.json();
+      const userRecord = listData.users.find((u) => u.id === tempUser.id);
+      assert.ok(userRecord);
+      assert.strictEqual(userRecord.passwordHash, undefined, 'Password hash must be stripped');
+
+      // 3. Admin suspends user account
+      const patchRes = await fetch(`${testServerBaseUrl}/admin/users/${tempUser.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminUserToken}`,
+        },
+        body: JSON.stringify({ status: 'suspended', notes: 'Temporarily suspended' }),
+      });
+      assert.strictEqual(patchRes.status, 200);
+      const patchData = await patchRes.json();
+      assert.strictEqual(patchData.user.status, 'suspended');
+
+      // 4. Suspended user attempts login -> 403 Forbidden
+      const loginRes = await fetch(`${testServerBaseUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: tempEmail, password: tempPass }),
+      });
+      assert.strictEqual(loginRes.status, 403);
+      const loginData = await loginRes.json();
+      assert.strictEqual(loginData.error.code, 'ACCOUNT_SUSPENDED');
+
+      // 5. Admin tries to suspend themselves -> rejected with 400
+      const selfRes = await fetch(`${testServerBaseUrl}/admin/users/${adminUserId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminUserToken}`,
+        },
+        body: JSON.stringify({ status: 'suspended' }),
+      });
+      assert.strictEqual(selfRes.status, 400);
+      const selfData = await selfRes.json();
+      assert.strictEqual(selfData.error.code, 'SELF_SUSPENSION_PROHIBITED');
+    });
+
+    await runTest('Relay Telemetry Monitoring: Accurately reports hop metrics and unique forwarder nodes', async () => {
+      // 1. Ingest a multi-hop relayed alert via sync endpoint
+      const relayAlertId = `admin-relay-test-${Date.now()}`;
+      await fetch(`${testServerBaseUrl}/alerts/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify([
+          {
+            alertId: relayAlertId,
+            emergencyType: 'Fire',
+            details: 'Relayed fire beacon via Node-7',
+            source: 'bluetooth',
+            hopCount: 2,
+            forwarderId: 'Node-Relay-7',
+            createdAt: new Date().toISOString(),
+          },
+        ]),
+      });
+
+      // 2. Query relay telemetry
+      const res = await fetch(`${testServerBaseUrl}/admin/relay`, {
+        headers: { Authorization: `Bearer ${adminUserToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.ok(data.stats.totalRelayedAlerts >= 1);
+      assert.ok(data.stats.maxHopObserved >= 2);
+      assert.ok(data.stats.uniqueForwardingNodes >= 1);
+      assert.ok(data.relays.length >= 1);
+    });
+
+    await runTest('Notification Monitoring: Reports delivery states and strictly masks recipient details', async () => {
+      // 1. Trigger notification creation via alert
+      await fetch(`${testServerBaseUrl}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          emergencyType: 'Test / Drill',
+          details: 'Notification monitoring audit test',
+        }),
+      });
+
+      // 2. Query admin notifications endpoint
+      const res = await fetch(`${testServerBaseUrl}/admin/notifications`, {
+        headers: { Authorization: `Bearer ${adminUserToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.ok(data.stats.total >= 1);
+
+      // 3. Verify recipient masking (must contain asterisks and never expose cleartext)
+      for (const notif of data.notifications) {
+        assert.ok(notif.recipient.includes('*'), `Recipient must be masked: ${notif.recipient}`);
+      }
+    });
+
   } finally {
     // Teardown and reset test databases and stores
     await stopEphemeralServer();
@@ -1707,6 +1984,7 @@ async function runComprehensiveTestSuite() {
     await userStore.writeUsers(initialUsers);
     await contactStore.writeContacts(initialContacts);
     await notificationStore.writeNotifications(initialNotifications);
+    await auditStore.writeLogs(initialAuditLogs);
   }
 
   console.log('\n================================================================');
@@ -1714,7 +1992,7 @@ async function runComprehensiveTestSuite() {
   console.log('================================================================\n');
 
   if (totalPassed === totalTests) {
-    console.log('✅ ALL STEP 10 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
+    console.log('✅ ALL STEP 11 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
     process.exit(0);
   } else {
     console.error(`❌ ${totalTests - totalPassed} TEST(S) FAILED.\n`);

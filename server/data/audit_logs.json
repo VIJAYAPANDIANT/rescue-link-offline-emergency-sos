@@ -1,0 +1,17 @@
+[
+  {
+    "id": "ac694cad-4acc-40b9-b3ce-1f83104235b0",
+    "action": "ADMIN_SETUP_CREATION",
+    "adminId": "6c3c6c37-a698-455c-b7a9-5660a478bc32",
+    "adminEmail": "admin@rescuelink.org",
+    "targetType": "user",
+    "targetId": "6c3c6c37-a698-455c-b7a9-5660a478bc32",
+    "details": {
+      "email": "admin@rescuelink.org",
+      "role": "admin"
+    },
+    "ipAddress": null,
+    "userAgent": null,
+    "timestamp": "2026-10-30T17:43:25.376Z"
+  }
+]

@@ -79,7 +79,7 @@ const register = async (req, res, next) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { id: safeUser.id, email: safeUser.email },
+      { id: safeUser.id, email: safeUser.email, role: safeUser.role },
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn }
     );
@@ -138,11 +138,21 @@ const login = async (req, res, next) => {
       });
     }
 
+    if (user.status === 'suspended' || user.status === 'deactivated') {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'ACCOUNT_SUSPENDED',
+          message: 'Your account has been suspended or deactivated. Please contact an administrator.',
+        },
+      });
+    }
+
     const safeUser = userStore.toSafeUser(user);
 
     // Generate JWT token
     const token = jwt.sign(
-      { id: safeUser.id, email: safeUser.email },
+      { id: safeUser.id, email: safeUser.email, role: safeUser.role },
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn }
     );

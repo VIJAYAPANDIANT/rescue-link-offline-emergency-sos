@@ -181,6 +181,100 @@ class NotificationStore {
     await this.writeNotifications(notifications);
     return updated;
   }
+
+  /**
+   * Helper to mask sensitive recipient details for privacy-preserving monitoring.
+   */
+  maskRecipient(recipient, channel) {
+    if (!recipient || typeof recipient !== 'string') return '***';
+    const trimmed = recipient.trim();
+    if (channel === 'email' || trimmed.includes('@')) {
+      const parts = trimmed.split('@');
+      if (parts.length !== 2) return '***@***';
+      const user = parts[0];
+      const domain = parts[1];
+      if (user.length <= 2) {
+        return `${user[0] || '*'}***@${domain}`;
+      }
+      return `${user[0]}***${user[user.length - 1]}@${domain}`;
+    }
+    // Phone number masking: keep country code and last 2-4 digits
+    if (trimmed.length > 5) {
+      const last = trimmed.slice(-4);
+      const prefix = trimmed.startsWith('+') ? trimmed.slice(0, 3) : trimmed.slice(0, 2);
+      return `${prefix}***${last}`;
+    }
+    return '***';
+  }
+
+  /**
+   * Retrieve paginated notifications with optional channel and status filters.
+   * Recipient details are securely masked for administrative monitoring.
+   */
+  async getPaginatedNotifications({ page = 1, limit = 20, channel, status, alertId } = {}) {
+    const notifications = await this.readNotifications();
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+
+    let filtered = notifications.filter((n) => {
+      if (channel && channel !== 'all' && n.channel !== channel) return false;
+      if (status && status !== 'all' && n.status !== status) return false;
+      if (alertId && n.alertId !== alertId) return false;
+      return true;
+    });
+
+    filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limitNum) || 1;
+    const startIndex = (pageNum - 1) * limitNum;
+    const paginated = filtered.slice(startIndex, startIndex + limitNum).map((n) => ({
+      ...n,
+      recipient: this.maskRecipient(n.recipient, n.channel),
+      rawRecipientLength: n.recipient ? n.recipient.length : 0,
+    }));
+
+    return {
+      notifications: paginated,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  /**
+   * Get delivery statistics across all notification tasks.
+   */
+  async getNotificationStats() {
+    const notifications = await this.readNotifications();
+    const stats = {
+      total: notifications.length,
+      queued: 0,
+      sending: 0,
+      sent: 0,
+      delivered: 0,
+      failed: 0,
+      byChannel: {
+        email: 0,
+        sms: 0,
+        push: 0,
+      },
+    };
+
+    for (const n of notifications) {
+      if (stats[n.status] !== undefined) {
+        stats[n.status]++;
+      }
+      if (stats.byChannel[n.channel] !== undefined) {
+        stats.byChannel[n.channel]++;
+      }
+    }
+
+    return stats;
+  }
 }
 
 const notificationStore = new NotificationStore();

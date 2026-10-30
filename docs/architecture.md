@@ -345,9 +345,87 @@ Selecting any map marker opens an actionable bottom sheet detailing:
 
 ---
 
-## 9. Comprehensive Automated Test Matrix (50 Tests)
+## 9. Web Admin Dashboard, Emergency Monitoring & Security Architecture (Step 11)
 
-The test runner (`tests/run-all-tests.mjs`) exercises all 8 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
+RescueLink incorporates a dedicated, responsive web-based command dashboard (`admin/`) built with React, Vite, and Tailwind CSS. It communicates securely with the central Express.js backend to provide operations oversight, incident triage, responder user management, Bluetooth Low Energy mesh telemetry, notification delivery monitoring, and security audit logging.
+
+```mermaid
+graph TD
+    subgraph WebAdmin ["RescueLink Admin Dashboard (React + Vite)"]
+        AdminLogin["Admin Login<br/>(JWT + Role Gate)"]
+        SidebarNav["Sidebar Navigation"]
+        OverviewTab["📊 Overview Dashboard<br/>(Real Telemetry, KPIs & Timeline)"]
+        IncidentTab["🚨 Incident Management<br/>(Search, Filter, Map, Lifecycle Triage)"]
+        UserTab["👥 User Management<br/>(Role Assignment, Suspend / Activate)"]
+        RelayTab["📡 Relay Monitoring<br/>(Hop Depth Distribution, Node Paths)"]
+        NotifTab["🔔 Notification Audits<br/>(Masked Delivery, Provider Status)"]
+        AnalyticsTab["📈 Situational Analytics<br/>(Real Empirical Trends)"]
+        AuditTab["📜 Audit Ledger<br/>(Tamper-Evident Security Log)"]
+
+        SidebarNav --> OverviewTab
+        SidebarNav --> IncidentTab
+        SidebarNav --> UserTab
+        SidebarNav --> RelayTab
+        SidebarNav --> NotifTab
+        SidebarNav --> AnalyticsTab
+        SidebarNav --> AuditTab
+    end
+
+    subgraph SecurityLayer ["Backend Security & RBAC Middleware"]
+        AuthMiddleware["authenticateToken<br/>(JWT Header / Query Check)"]
+        AdminMiddleware["requireAdmin<br/>(Role: 'admin', Status: 'active')"]
+        AuthMiddleware --> AdminMiddleware
+    end
+
+    subgraph BackendAPI ["Express.js Admin REST Endpoints"]
+        AdminMiddleware --> DashEP["GET /api/admin/dashboard"]
+        AdminMiddleware --> IncidentsEP["GET & PATCH /api/admin/incidents"]
+        AdminMiddleware --> UsersEP["GET & PATCH /api/admin/users"]
+        AdminMiddleware --> RelayEP["GET /api/admin/relay"]
+        AdminMiddleware --> NotifEP["GET /api/admin/notifications"]
+        AdminMiddleware --> AuditEP["GET /api/admin/audit-logs"]
+    end
+
+    subgraph PersistentStorage ["Atomic Server Data Stores"]
+        DashEP --> AlertStore[("alerts.json")]
+        DashEP --> UserStore[("users.json")]
+        DashEP --> NotifStore[("notifications.json")]
+        IncidentsEP --> AlertStore
+        UsersEP --> UserStore
+        RelayEP --> AlertStore
+        NotifEP --> NotifStore
+        IncidentsEP -. "Audit Record" .-> AuditStore[("audit_logs.json")]
+        UsersEP -. "Audit Record" .-> AuditStore
+        AuditEP --> AuditStore
+    end
+```
+
+### 9.1 Role-Based Access Control (RBAC) & Authentication
+- **Admin Role Enforcement**: All routes mounted under `/api/admin` require both `authenticateToken` and `requireAdmin`. Unauthenticated requests yield `401 Unauthorized`; authenticated non-admin users yield `403 Forbidden` (`FORBIDDEN_ADMIN_REQUIRED`).
+- **Account Status Verification**: Accounts marked `suspended` or `deactivated` are strictly blocked from logging in (`403 Forbidden: ACCOUNT_SUSPENDED`).
+- **Self-Protection Guardrails**: Administrators cannot suspend or demote their own account (`SELF_SUSPENSION_PROHIBITED`, `SELF_DEMOTION_PROHIBITED`), preventing accidental administrative lockout.
+- **Initial Setup Utility**: Secure initial administrator provisioning script (`server/scripts/create-admin.js` / `npm run seed:admin`) with bcrypt password hashing (10 salt rounds) and administrative audit logging. Zero hardcoded passwords or committed secrets.
+
+### 9.2 Incident Lifecycle Triage & Immutability Guarantees
+- **Administrative Lifecycle Statuses**: Authorized administrators can transition incidents through operational states: `Pending` $\to$ `Open` $\to$ `Investigating` $\to$ `Dispatched` $\to$ `Acknowledged` $\to$ `Resolved` or `False Alarm`.
+- **Survivor Data Preservation**: Updating an incident's administrative status **never** alters the survivor's original distress narrative, GPS coordinates, local BLE delivery state, or peer acknowledgment receipt.
+- **Audit Attachment**: Every status change creates an immutable audit record in `server/data/audit_logs.json` and embeds a reviewer stamp (`adminReview`) on the incident record.
+
+### 9.3 Privacy-Preserving Recipient Masking
+- In compliance with privacy standards, notification recipient endpoints are strictly masked in administrative views:
+  - Email addresses: `j***e@example.com`
+  - Phone numbers: `+1***890`
+- Zero raw phone numbers, email addresses, or survivor credentials are leaked in administrative monitoring logs.
+
+### 9.4 Empirical Analytics Without Data Fabrication
+- The dashboard overview and analytics visualizations compute metrics solely from verified records stored in `alerts.json`, `notifications.json`, `users.json`, and `audit_logs.json`.
+- In the absence of data, clean empty states are rendered; synthetic sample statistics or fabricated trend curves are strictly prohibited.
+
+---
+
+## 10. Comprehensive Automated Test Matrix (57 Tests)
+
+The test runner (`tests/run-all-tests.mjs`) exercises all 9 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
 
 1. **Module 1**: Authentication, JWT & Security (6 tests)
 2. **Module 2**: Emergency Alert REST API & Validation (5 tests)
@@ -357,9 +435,11 @@ The test runner (`tests/run-all-tests.mjs`) exercises all 8 core subsystems in p
 6. **Module 6**: Multi-Device SOS Relay Network (10 tests)
 7. **Module 7**: Emergency Contact Management & SOS Notifications (9 tests)
 8. **Module 8**: Live Emergency Map & Incident Tracking (6 tests)
-   - `GET /api/alerts/map` returns mapped incidents with valid coordinates, excludes invalid GPS, and reports summary counters
-   - `GET /api/alerts/map` respects category filters and isolates unmapped alerts
-   - `GET /api/alerts/stream` establishes valid SSE connection with `text/event-stream`, keep-alive comments, and token authentication
-   - SQLite repository `getMappedAlerts` retrieves incidents with coordinates and filters out non-geographic alerts
-   - Coordinate bounding box validator rejects out-of-range coordinates, zero-coordinate fabrication, and malformed GPS tuples
-   - Map deep-linking URL generator constructs valid navigation URLs for Google Maps and Apple Maps
+9. **Module 9**: Admin Dashboard, Incident Monitoring & Analytics (7 tests)
+   - `Admin Auth & Role Restrictions`: Non-admin users rejected with `403 Forbidden` (`FORBIDDEN_ADMIN_REQUIRED`); unauthenticated requests rejected with 401
+   - `Admin Login & Dashboard Overview`: Authenticated administrator receives real aggregated telemetry (`summary`, `notificationStats`, `incidentTypeDistribution`, `timeline`)
+   - `Incident Management`: Admin updates lifecycle status (`Investigating`, `Dispatched`, `Resolved`), preserves original survivor details and coordinates, rejects invalid status strings
+   - `Administrative Audit Logs`: Status updates automatically generate tamper-evident audit records in `audit_logs.json` without leaking passwords, tokens, or secrets
+   - `Admin User Management & Status`: Admin suspends user account, immediately blocking login (`403 ACCOUNT_SUSPENDED`); self-suspension is guarded and rejected
+   - `Relay Telemetry Monitoring`: Accurately reports hop metrics, unique forwarder nodes, and hop count distributions
+   - `Notification Monitoring`: Reports delivery states (queued, sending, sent, delivered, failed) and strictly masks recipient details (e.g. `a***n@example.com`, `+1***890`)

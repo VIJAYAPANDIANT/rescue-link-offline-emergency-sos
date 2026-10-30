@@ -4,6 +4,7 @@ const authRoutes = require('./auth.routes');
 const alertRoutes = require('./alert.routes');
 const contactRoutes = require('./contact.routes');
 const notificationRoutes = require('./notification.routes');
+const adminRoutes = require('./admin.routes');
 
 const router = express.Router();
 
@@ -21,5 +22,8 @@ router.use('/contacts', contactRoutes);
 
 // Emergency Notification endpoints mounted at /api/notifications
 router.use('/notifications', notificationRoutes);
+
+// Administrator Dashboard & Monitoring endpoints mounted at /api/admin
+router.use('/admin', adminRoutes);
 
 module.exports = router;

@@ -6,7 +6,7 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–10 Completed: Live Emergency Map & Incident Tracking)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–11 Completed: Admin Dashboard, Emergency Monitoring & Analytics)**
 
 ---
 
@@ -14,7 +14,7 @@
 
 **RescueLink** is a mission-critical, offline-first mobile emergency distress response system. During major natural disasters (earthquakes, cyclones, floods), wilderness expeditions, or catastrophic power grid collapse, cellular infrastructure and commercial internet services often fail entirely.
 
-RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence**, an automated **multi-channel emergency contact notification pipeline**, and a **live interactive emergency map with real-time situational tracking**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend, which automatically dispatches distress alerts via Email (SMTP) and SMS (Twilio) to designated emergency contacts and streams active incidents to responders' live maps in real time.
+RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence**, an automated **multi-channel emergency contact notification pipeline**, a **live interactive emergency map with real-time situational tracking**, and a **dedicated web-based Admin Command Dashboard & Analytics Suite**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend, which automatically dispatches distress alerts via Email (SMTP) and SMS (Twilio) to designated emergency contacts, streams active incidents to field responders' live maps in real time, and renders live situational telemetry on the administrator command dashboard.
 
 ---
 
@@ -22,7 +22,7 @@ RescueLink bridges this communication gap through a **multi-device Bluetooth Low
 
 > [!IMPORTANT]
 > **RescueLink is an academic engineering project.**
-> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, durable offline SQLite storage, multi-channel notifications, and live incident mapping, it is **NOT certified by government public safety answering points (PSAPs)**.
+> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, durable offline SQLite storage, multi-channel notifications, live incident mapping, and administrative oversight, it is **NOT certified by government public safety answering points (PSAPs)**.
 > - This software is **NOT a replacement for certified 911, 112, or local emergency dispatch hotlines**.
 > - In an active emergency where cellular networks or landlines are available, always contact official emergency services immediately.
 
@@ -41,10 +41,11 @@ RescueLink bridges this communication gap through a **multi-device Bluetooth Low
 | **Local Storage** | `expo-sqlite` (v15.1.4) | Offline WAL persistence, schema migrations (v1-v4), outbox & contacts | ✅ Completed (Steps 5, 8 & 9) |
 | **Connectivity & NetInfo** | `@react-native-community/netinfo` (v11.4.1) | Live network monitoring & internet reachability verification | ✅ Completed (Step 6) |
 | **Cloud Synchronization** | Opportunistic Sync Engine + Express REST | Outbox batch processing, exponential backoff, & BLE relay attribution | ✅ Completed (Step 6) |
-| **System Integration** | End-to-End Relay + Security Audit + 50 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
+| **System Integration** | End-to-End Relay + Security Audit + 57 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
 | **Multi-Device SOS Relay** | Controlled BLE Epidemic Mesh Forwarding | Multi-hop routing (A -> B -> C), hop limits, tamper hash, TTL & rate limits | ✅ Completed (Step 8) |
 | **Emergency Contacts & Notifications**| SMTP Email + Twilio SMS + SQLite Tasks | Multi-channel dispatch, priority sorting, location consent gate & idempotency | ✅ Completed (Step 9) |
 | **Live Map & Situational Tracking** | `react-native-maps` (v1.18.0) + Tactical Canvas + SSE | Dual-engine interactive map, real-time SSE stream, & offline GPS radar | ✅ Completed (Step 10) |
+| **Admin Dashboard & Analytics** | React + Vite + Tailwind CSS | Operations command center, incident triage, user management & telemetry | ✅ Completed (Step 11) |
 | **Cryptographic E2EE** | Curve25519 / X25519 Asymmetric Encryption | End-to-end encryption of sensitive characteristic details | ⏳ Planned (Next Phase) |
 
 ---
@@ -120,9 +121,43 @@ c:\Offline Emergency SOS/
 │           ├── constants.js           # Emergency categories, status & disclaimers
 │           ├── theme.js               # Emergency color palette, spacing & typography
 │           └── helpers.js             # Formatter functions (coords, dates, IDs)
+├── admin/                             # Step 11: Web Admin Dashboard (React + Vite + Tailwind CSS)
+│   ├── index.html                     # Web entry point
+│   ├── package.json                   # Dashboard dependencies & scripts
+│   ├── vite.config.js                 # Vite proxy & build configuration
+│   ├── tailwind.config.js             # Emergency command center theme
+│   ├── src/
+│   │   ├── main.jsx                   # Application bootstrap & auth context mount
+│   │   ├── App.jsx                    # Core shell, sidebar router & tab navigation
+│   │   ├── index.css                  # Custom styling & scrollbars
+│   │   ├── api/
+│   │   │   └── adminApi.js            # Admin REST client for /api/admin & /api/auth
+│   │   ├── context/
+│   │   │   └── AdminAuthContext.jsx   # Admin authentication session & token storage
+│   │   ├── components/                # Reusable dashboard UI components
+│   │   │   ├── Sidebar.jsx            # Dark operations navigation sidebar
+│   │   │   ├── Header.jsx             # Top bar with gateway heartbeat & refresh
+│   │   │   ├── MetricCard.jsx         # Telemetry KPI cards with trends
+│   │   │   ├── StatusBadge.jsx        # Standardized color-coded status badges
+│   │   │   ├── InteractiveMap.jsx     # Spatial radar canvas for mapped incidents
+│   │   │   ├── Modal.jsx              # Accessible modal dialog
+│   │   │   ├── Pagination.jsx         # Paginated page control
+│   │   │   ├── EmptyState.jsx         # Truthful zero-record presentation
+│   │   │   └── Icons.jsx              # Vector SVG icons
+│   │   └── views/                     # Full-page administration modules
+│   │       ├── LoginView.jsx          # Admin credentials entry & validation
+│   │       ├── OverviewView.jsx       # Operational metrics, sync health & charts
+│   │       ├── IncidentsView.jsx      # Triage table, spatial canvas, & status transitions
+│   │       ├── UsersView.jsx          # Account management, suspension & role updates
+│   │       ├── RelayView.jsx          # BLE mesh forwarding telemetry & hop depth
+│   │       ├── NotificationsView.jsx  # Multi-channel delivery audits & masked recipients
+│   │       ├── AnalyticsView.jsx      # Daily broadcast cadence & category breakdown
+│   │       └── AuditLogsView.jsx      # Tamper-evident administrative action ledger
 ├── server/
 │   ├── config/
 │   │   └── env.js                     # Validated environment loader with notification configs
+│   ├── scripts/
+│   │   └── create-admin.js            # Step 11: Safe initial administrator setup CLI
 │   ├── validators/                    # Request payload validation
 │   │   └── contact.validator.js       # Step 9 Phone, email, name, & priority validation
 │   ├── controllers/
@@ -130,29 +165,34 @@ c:\Offline Emergency SOS/
 │   │   ├── auth.controller.js         # Register, Login, & Profile controllers
 │   │   ├── alert.controller.js        # Alert CRUD, status, & validation controllers
 │   │   ├── contact.controller.js      # Step 9 Emergency contacts CRUD controller
-│   │   └── notification.controller.js # Step 9 Notification history & test controller
+│   │   ├── notification.controller.js # Step 9 Notification history & test controller
+│   │   └── admin.controller.js        # Step 11: Dashboard, incident triage & user management
 │   ├── middleware/
-│   │   ├── auth.middleware.js         # JWT verification & senderId attachment
+│   │   ├── auth.middleware.js         # JWT verification, requireAdmin role check & status
 │   │   ├── error.middleware.js        # Central Express error handler
 │   │   └── notFound.middleware.js     # Standardized 404 handler
 │   ├── data/                          # Atomic Server Persistence
-│   │   ├── users.json                 # Thread-safe atomic JSON user store
+│   │   ├── users.json                 # Thread-safe atomic JSON user store (with roles & status)
 │   │   ├── alerts.json                # Concurrency-locked atomic JSON alert store
 │   │   ├── contacts.json              # Step 9 Thread-safe atomic contacts store
-│   │   └── notifications.json         # Step 9 Delivery audit logs store
+│   │   ├── notifications.json         # Step 9 Delivery audit logs store
+│   │   └── audit_logs.json            # Step 11: Administrative security action ledger
 │   ├── routes/
 │   │   ├── health.routes.js           # GET /api/health route
 │   │   ├── auth.routes.js             # /api/auth routes
 │   │   ├── alert.routes.js            # /api/alerts routes
 │   │   ├── contact.routes.js          # Step 9 /api/contacts routes
 │   │   ├── notification.routes.js     # Step 9 /api/notifications routes
+│   │   ├── admin.routes.js            # Step 11: Protected /api/admin routes
 │   │   └── index.js                   # Central route aggregator
 │   ├── services/
 │   │   ├── storage.service.js         # Atomic mutex file write utility
 │   │   ├── alert.service.js           # Alert domain logic & sync ingestion
-│   │   ├── alertStore.js              # Idempotent storage with relay metadata
+│   │   ├── alertStore.js              # Idempotent storage with relay metadata & admin status
+│   │   ├── userStore.js               # User persistence with role & status controls
 │   │   ├── contactStore.js            # Step 9 Thread-safe contact repository
 │   │   ├── notificationStore.js       # Step 9 Task persistence & idempotency tracking
+│   │   ├── auditStore.js              # Step 11: Administrative action audit logging
 │   │   └── notification/              # Step 9 Multi-channel notification engine
 │   │       ├── notificationService.js # Message formatter, consent check & dispatch coordinator
 │   │       └── providers/             # Delivery providers
@@ -160,8 +200,8 @@ c:\Offline Emergency SOS/
 │   │           └── smsProvider.js     # Twilio SMS & simulated fallback
 │   ├── .env                           # Local environment configuration
 │   ├── .env.example                   # Environment variable template
-│   ├── package.json                   # Server dependencies & scripts
-│   └── server.js                      # Express application entry point
+│   ├── package.json                   # Server dependencies & scripts (seed:admin)
+│   └── server.js                      # Express application entry point (PATCH CORS enabled)
 ├── tests/
 │   ├── run-all-tests.mjs              # Unified 44-scenario automated test runner
 │   └── run-step6-sync-tests.mjs       # Step 6 outbox & sync regression tests
@@ -889,9 +929,94 @@ Tapping any incident marker opens an incident details bottom sheet:
 
 ---
 
+## 🖥️ Web Admin Dashboard & Operations Command (Step 11)
+
+RescueLink features a dedicated, responsive web-based command dashboard (`admin/`) built with **React**, **Vite**, and **Tailwind CSS**. It connects to the central Express backend to provide real-time situational awareness, incident lifecycle triage, responder account administration, BLE mesh forwarding monitoring, and tamper-evident audit logging.
+
+```mermaid
+graph TD
+    subgraph Browser ["Web Admin Interface (http://localhost:5173)"]
+        LoginView["Login & Role Gate"]
+        Sidebar["Operations Sidebar"]
+        Overview["📊 Dashboard Overview"]
+        Incidents["🚨 Incident Management & Map"]
+        Users["👥 User Accounts & Roles"]
+        Relay["📡 BLE Mesh Telemetry"]
+        Notifications["🔔 Notification Dispatch Logs"]
+        Analytics["📈 Empirical Trends & Analytics"]
+        AuditLogs["📜 Security Audit Ledger"]
+
+        Sidebar --> Overview
+        Sidebar --> Incidents
+        Sidebar --> Users
+        Sidebar --> Relay
+        Sidebar --> Notifications
+        Sidebar --> Analytics
+        Sidebar --> AuditLogs
+    end
+
+    subgraph Security ["Backend Role-Based Access Control (RBAC)"]
+        AuthCheck["authenticateToken (JWT Header)"]
+        RoleCheck["requireAdmin (role: 'admin', status: 'active')"]
+        AuthCheck --> RoleCheck
+    end
+
+    subgraph Endpoints ["Protected Express APIs (/api/admin)"]
+        RoleCheck --> GET_Dash["GET /api/admin/dashboard"]
+        RoleCheck --> INC_EP["GET & PATCH /api/admin/incidents"]
+        RoleCheck --> USR_EP["GET & PATCH /api/admin/users"]
+        RoleCheck --> RELAY_EP["GET /api/admin/relay"]
+        RoleCheck --> NOTIF_EP["GET /api/admin/notifications"]
+        RoleCheck --> AUDIT_EP["GET /api/admin/audit-logs"]
+    end
+```
+
+### 1. Initial Administrator Provisioning
+Administrator accounts are provisioned securely via the dedicated CLI script without hardcoded passwords or plain-text tokens:
+
+```bash
+# Provision or promote an administrator:
+node server/scripts/create-admin.js --name "Chief Commander" --email "admin@rescuelink.org" --password "YourStrongPassword"
+
+# Or via npm script in the server directory:
+cd server && npm run seed:admin
+```
+
+### 2. Running the Admin Dashboard
+```bash
+# In a new terminal, start the admin development server:
+cd admin
+npm run dev
+
+# Dashboard opens at: http://localhost:5173
+```
+
+### 3. Protected Backend Administration APIs
+All administrative endpoints strictly require a valid JWT bearer token with verified `admin` role claims:
+
+| Method | Endpoint | Description | Security Controls |
+|---|---|---|---|
+| `GET` | `/api/admin/dashboard` | Aggregated system metrics, KPI counters, notification health & timeline | Role-checked (`requireAdmin`), no data fabrication |
+| `GET` | `/api/admin/incidents` | Paginated incident list with search, category, status, and GPS filters | Pagination limits (max 100), full text search |
+| `GET` | `/api/admin/incidents/:id` | Full incident details with attached administrative audit logs | 404 on invalid ID, returns complete timeline |
+| `PATCH` | `/api/admin/incidents/:id/status` | Update incident status (`Pending`, `Investigating`, `Dispatched`, `Resolved`, `False Alarm`) | Preserves original survivor narrative & BLE states; writes audit log |
+| `GET` | `/api/admin/users` | Paginated user directory with role and status filters | Strips `passwordHash` and all credential tokens |
+| `PATCH` | `/api/admin/users/:id/status` | Update account status (`active`, `suspended`) or role (`admin`, `responder`) | Self-suspension and self-demotion prevention guardrails |
+| `GET` | `/api/admin/relay` | BLE multi-hop mesh forwarding telemetry & hop depth metrics | Privacy-preserving; never fabricates unconsented physical location |
+| `GET` | `/api/admin/notifications` | Delivery audit logs with masked recipient addresses | Masks emails (`j***e@example.com`) and phones (`+1***890`) |
+| `GET` | `/api/admin/audit-logs` | Chronological administrative security audit ledger | Tamper-evident atomic JSON logging (`audit_logs.json`) |
+
+### 4. Privacy & Immutability Safeguards
+- **Survivor Distress Immutability**: Modifying an incident's administrative status (e.g. marking `Dispatched` or `Resolved`) updates `alerts[].status` and attaches an `adminReview` metadata stamp, but **never overwrites** the original distress text, GPS coordinates, local BLE delivery state, or peer acknowledgment receipt.
+- **Masked Recipient References**: In compliance with privacy standards, survivor notification destinations in the admin portal are masked (`a***n@example.com`, `+1***890`).
+- **Zero Fabricated Analytics**: Visualizations (incidents over time, emergency category distribution, hop distribution) are derived solely from real stored records. In empty states, clear zero-record representations are displayed without simulated curves.
+- **Account Suspension Enforcement**: Suspended users are immediately blocked from logging in via `POST /api/auth/login` (`403 ACCOUNT_SUSPENDED`).
+
+---
+
 ## 🧪 Automated Verification & Test Results
 
-The project includes an end-to-end automated integration test suite covering all 8 core subsystem modules:
+The project includes an end-to-end automated integration test suite covering all 9 core subsystem modules:
 
 ```bash
 # Run complete test suite from repository root:
@@ -901,7 +1026,7 @@ node tests/run-all-tests.mjs
 cd server && npm test
 ```
 
-### Verified Test Suite (50/50 Passing)
+### Verified Test Suite (57/57 Passing)
 
 | Test Module | Test Scenario | Result |
 |---|---|---|
@@ -955,6 +1080,13 @@ cd server && npm test
 | | SQLite repository `getMappedAlerts` retrieves incidents with coordinates and filters out unmapped alerts | **PASS** |
 | | Coordinate bounding box validator rejects out-of-range coordinates, zero-coordinate fabrication, and NaN values | **PASS** |
 | | Map deep-linking URL generator constructs valid navigation URLs for Google Maps and Apple Maps | **PASS** |
+| **Module 9: Admin Dashboard & Emergency Analytics** | Non-admin users rejected with `403 Forbidden` (`FORBIDDEN_ADMIN_REQUIRED`); unauthenticated requests rejected with 401 | **PASS** |
+| | Authenticated administrator receives real aggregated telemetry (`summary`, `notificationStats`, `timeline`) | **PASS** |
+| | Admin updates lifecycle status (`Investigating`, `Dispatched`), preserves original survivor details, rejects invalid status | **PASS** |
+| | Actions generate tamper-evident audit records in `audit_logs.json` without leaking passwords, tokens, or secrets | **PASS** |
+| | Admin suspends user account, blocking login (`403 ACCOUNT_SUSPENDED`); self-suspension is blocked | **PASS** |
+| | Accurately reports hop metrics, unique forwarder nodes, and hop count distributions | **PASS** |
+| | Reports notification delivery states and strictly masks recipient details (e.g. `a***n@example.com`, `+1***890`) | **PASS** |
 
 ---
 
@@ -1037,6 +1169,18 @@ cd server && npm test
   - Live real-time incident updates via Server-Sent Events (SSE) `GET /api/alerts/stream` with 15s polling failover
   - Clear situational telemetry badges: 🟢 Live (SSE), 🟡 Periodic Polling, ⚪ Offline (SQLite Cache)
   - Full automated integration test suite: Module 8 (6 tests, 50/50 total passing across 8 modules)
+- [x] **Step 11: Admin Dashboard, Emergency Monitoring, and Analytics** (Completed)
+  - Responsive web admin dashboard application (`admin/`) built with React 18, Vite 6, and Tailwind CSS
+  - Role-based access control (RBAC) on backend (`requireAdmin`) enforcing `role: 'admin'` and `status: 'active'`
+  - Safe initial administrator provisioning CLI (`server/scripts/create-admin.js` / `npm run seed:admin`)
+  - Incident management module with ID search, status/type filters, lifecycle transitions, and audit records
+  - Geospatial tactical radar canvas for geocoded incidents with quarantined unmapped drawer
+  - User management module with suspension/reactivation actions and lockout protection
+  - Multi-device BLE mesh telemetry with hop depth distribution and forwarder node analysis
+  - Notification dispatch monitoring with privacy-preserving recipient masking (`j***e@example.com`, `+1***890`)
+  - Real stored data analytics (daily cadence, emergency type distribution, status breakdown) without fabricated metrics
+  - Tamper-evident administrative security audit ledger (`server/data/audit_logs.json`)
+  - Comprehensive automated test suite: Module 9 (7 tests, 57/57 total passing across 9 modules)
 - [ ] **Future Enhancements (Post-Prototype)**
   - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
   - Multi-region clustered WebSocket gateways for global PSAP ingestion dispatch
