@@ -702,6 +702,19 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                       </View>
                     ) : null}
 
+                    {/* Step 10 Map Action: View on Live Map if coordinates present */}
+                    {item.latitude !== null && item.longitude !== null ? (
+                      <View style={[styles.actionRow, { marginBottom: spacing.xs }]}>
+                        <PrimaryButton
+                          title="🗺️ View on Live Map"
+                          onPress={() => navigation.navigate('LiveMap', { focusAlertId: item.alertId || item.id })}
+                          variant="secondary"
+                          icon="🗺️"
+                          style={styles.resolveButton}
+                        />
+                      </View>
+                    ) : null}
+
                     {/* Action: Mark as Resolved */}
                     {isPending ? (
                       <View style={styles.actionRow}>

@@ -283,9 +283,15 @@ export const ProfileScreen = ({ navigation }) => {
 
           <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
             <PrimaryButton
+              title="Open Live Incident Map"
+              onPress={() => navigation.navigate('LiveMap')}
+              variant="primary"
+              icon="🗺️"
+            />
+            <PrimaryButton
               title="Manage Emergency Contacts"
               onPress={() => navigation.navigate('Contacts')}
-              variant="primary"
+              variant="outline"
               icon="👥"
             />
             <PrimaryButton

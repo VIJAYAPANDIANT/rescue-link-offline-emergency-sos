@@ -20,12 +20,14 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const EventEmitter = require('events');
 
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
 const ALERTS_FILE = path.join(DATA_DIR, 'alerts.json');
 
-class AlertStore {
+class AlertStore extends EventEmitter {
   constructor() {
+    super();
     this.writeLock = Promise.resolve();
     this.ensureInitialized();
   }
@@ -93,10 +95,24 @@ class AlertStore {
           // Write payload to temporary file first
           await fs.promises.writeFile(tempFile, jsonPayload, 'utf8');
 
-          // Atomically rename temp file over destination file
-          await fs.promises.rename(tempFile, ALERTS_FILE);
+          // Atomically rename temp file over destination file with retry
+          let renamed = false;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              await fs.promises.rename(tempFile, ALERTS_FILE);
+              renamed = true;
+              break;
+            } catch (err) {
+              if ((err.code === 'EPERM' || err.code === 'EBUSY') && attempt < 4) {
+                await new Promise((r) => setTimeout(r, 25 * (attempt + 1)));
+              } else {
+                try { await fs.promises.unlink(tempFile); } catch (e) {}
+                throw err;
+              }
+            }
+          }
 
-          resolve();
+          if (renamed) resolve();
         })
         .catch((err) => {
           console.error('[AlertStore] Error writing alerts.json:', err);
@@ -159,6 +175,7 @@ class AlertStore {
 
     alerts.push(newAlert);
     await this.writeAlerts(alerts);
+    this.emit('alert_event', { type: 'alert_created', alert: newAlert });
     return newAlert;
   }
 
@@ -198,6 +215,7 @@ class AlertStore {
 
     alerts.push(newAlert);
     await this.writeAlerts(alerts);
+    this.emit('alert_event', { type: 'alert_synced', alert: newAlert });
     return { alert: newAlert, isNew: true };
   }
 
@@ -223,7 +241,35 @@ class AlertStore {
     };
 
     await this.writeAlerts(alerts);
+    this.emit('alert_event', { type: 'alert_updated', alert: alerts[index] });
     return alerts[index];
+  }
+
+  /**
+   * Retrieve all alerts with optional geographic, category, and timestamp filters.
+   *
+   * @param {object} [options]
+   * @param {string} [options.status]
+   * @param {string} [options.emergencyType]
+   * @param {string} [options.since]
+   * @param {boolean} [options.hasLocation]
+   * @returns {Promise<Array>}
+   */
+  async getAllAlerts({ status, emergencyType, since, hasLocation } = {}) {
+    const alerts = await this.readAlerts();
+    return alerts
+      .filter((a) => {
+        if (status && status !== 'all' && status !== 'ALL' && a.status !== status) return false;
+        if (emergencyType && a.emergencyType !== emergencyType) return false;
+        if (since && new Date(a.updatedAt || a.createdAt) <= new Date(since)) return false;
+        if (hasLocation === true) {
+          if (!a.location || typeof a.location.latitude !== 'number' || typeof a.location.longitude !== 'number') {
+            return false;
+          }
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 }
 

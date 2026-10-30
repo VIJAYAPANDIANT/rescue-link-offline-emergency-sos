@@ -10,6 +10,8 @@ const {
   getAlertById,
   updateAlertStatus,
   syncAlerts,
+  getMappedAlerts,
+  streamAlerts,
 } = require('../controllers/alert.controller');
 const authenticateToken = require('../middleware/auth.middleware');
 
@@ -19,6 +21,20 @@ const router = express.Router();
  * All alert routes require a valid JSON Web Token
  */
 router.use(authenticateToken);
+
+/**
+ * @route   GET /api/alerts/map
+ * @desc    Retrieve all emergency alerts with valid coordinates for Live Map
+ * @access  Protected
+ */
+router.get('/map', getMappedAlerts);
+
+/**
+ * @route   GET /api/alerts/stream
+ * @desc    Live Server-Sent Events (SSE) feed of new and updated alerts
+ * @access  Protected
+ */
+router.get('/stream', streamAlerts);
 
 /**
  * @route   POST /api/alerts/sync

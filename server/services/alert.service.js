@@ -463,6 +463,39 @@ class AlertService {
       },
     };
   }
+
+  /**
+   * Retrieve all incidents with valid GPS coordinates for the Live Emergency Map.
+   *
+   * @param {object} [options]
+   * @param {string} [options.status]
+   * @param {string} [options.emergencyType]
+   * @param {string} [options.since]
+   */
+  async getMappedAlerts({ status, emergencyType, since } = {}) {
+    const alerts = await alertStore.getAllAlerts({
+      status,
+      emergencyType,
+      since,
+      hasLocation: true,
+    });
+
+    const allAlerts = await alertStore.readAlerts();
+    const withLocationCount = allAlerts.filter(
+      (a) => a.location && typeof a.location.latitude === 'number' && typeof a.location.longitude === 'number'
+    ).length;
+    const unmappedCount = allAlerts.length - withLocationCount;
+
+    return {
+      alerts,
+      summary: {
+        total: allAlerts.length,
+        mappedCount: alerts.length,
+        unmappedCount,
+        serverTime: new Date().toISOString(),
+      },
+    };
+  }
 }
 
 const alertService = new AlertService();

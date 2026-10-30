@@ -10,6 +10,7 @@ import { RegisterScreen } from '../screens/RegisterScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { EmergencyContactsScreen } from '../screens/EmergencyContactsScreen';
 import { NotificationHistoryScreen } from '../screens/NotificationHistoryScreen';
+import { LiveEmergencyMapScreen } from '../screens/LiveEmergencyMapScreen';
 import { colors, spacing, shadows } from '../utils/theme';
 
 /**
@@ -94,6 +95,9 @@ const NavigatorContent = () => {
         return <EmergencyContactsScreen navigation={navigation} route={{ params: routeParams }} />;
       case 'NotificationHistory':
         return <NotificationHistoryScreen navigation={navigation} route={{ params: routeParams }} />;
+      case 'LiveMap':
+      case 'Map':
+        return <LiveEmergencyMapScreen navigation={navigation} route={{ params: routeParams }} />;
       case 'Home':
       default:
         return (
@@ -108,6 +112,7 @@ const NavigatorContent = () => {
   // Bottom Navigation Items
   const navTabs = [
     { key: 'Home', label: 'Dashboard', icon: '🚨' },
+    { key: 'LiveMap', label: 'Map', icon: '🗺️' },
     { key: 'SendSOS', label: 'Send SOS', icon: '📝' },
     { key: 'NearbyDevices', label: 'Nearby', icon: '📡' },
     { key: 'EmergencyHistory', label: 'History', icon: '📋' },

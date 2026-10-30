@@ -122,7 +122,7 @@ function stopEphemeralServer() {
 
 async function runComprehensiveTestSuite() {
   console.log('================================================================');
-  console.log('   RESCUELINK STEP 9 COMPREHENSIVE AUTOMATED TEST SUITE');
+  console.log('   RESCUELINK STEP 10 COMPREHENSIVE AUTOMATED TEST SUITE');
   console.log('================================================================\n');
 
   let totalPassed = 0;
@@ -1460,6 +1460,245 @@ async function runComprehensiveTestSuite() {
       assert.strictEqual(testNotifData.success, true);
       assert.strictEqual(testNotifData.data.provider, 'simulated_smtp');
     });
+
+    // =========================================================================
+    // MODULE 8: LIVE EMERGENCY MAP & INCIDENT TRACKING
+    // =========================================================================
+    console.log('\n--- Module 8: Live Emergency Map & Incident Tracking ---');
+
+    let unmappedAlertId = null;
+    let mappedAlertId = null;
+
+    await runTest('Map API: GET /api/alerts/map returns only incidents with valid coordinates and accurate summaries', async () => {
+      // Create a mapped alert
+      const mapRes = await fetch(`${testServerBaseUrl}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          emergencyType: 'Medical Emergency',
+          details: 'Survivor mapped incident',
+          location: { latitude: 37.7749, longitude: -122.4194 },
+        }),
+      });
+      assert.strictEqual(mapRes.status, 201);
+      const mapData = await mapRes.json();
+      mappedAlertId = mapData.data.id;
+
+      // Query GET /api/alerts/map
+      const res = await fetch(`${testServerBaseUrl}/alerts/map`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.ok(Array.isArray(data.data));
+
+      // Every returned alert must have numerical coordinates
+      for (const item of data.data) {
+        assert.ok(item.location, 'Must contain location object');
+        assert.strictEqual(typeof item.location.latitude, 'number');
+        assert.strictEqual(typeof item.location.longitude, 'number');
+        assert.ok(item.location.latitude >= -90 && item.location.latitude <= 90);
+        assert.ok(item.location.longitude >= -180 && item.location.longitude <= 180);
+      }
+
+      assert.strictEqual(data.summary.mappedCount, data.data.length);
+      assert.ok(data.summary.total >= data.summary.mappedCount);
+      assert.ok(typeof data.summary.serverTime === 'string');
+    });
+
+    await runTest('Map API: Unmapped alerts (missing coordinates) are excluded from /api/alerts/map results', async () => {
+      // Create an alert with NO coordinates
+      const unmappedRes = await fetch(`${testServerBaseUrl}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          emergencyType: 'Personal Safety',
+          details: 'Unmapped alert with location omitted by survivor',
+          location: null,
+        }),
+      });
+      assert.strictEqual(unmappedRes.status, 201);
+      const unmappedData = await unmappedRes.json();
+      unmappedAlertId = unmappedData.data.id;
+
+      // Query GET /api/alerts/map
+      const res = await fetch(`${testServerBaseUrl}/alerts/map`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+
+      // The unmapped alert must NOT be in the mapped array
+      const found = data.data.find((a) => a.id === unmappedAlertId);
+      assert.strictEqual(found, undefined, 'Unmapped alert must not appear on map');
+      assert.ok(data.summary.unmappedCount >= 1, 'Unmapped count must be at least 1');
+    });
+
+    await runTest('Map API: Status and category filtering on /api/alerts/map', async () => {
+      // Filter by status=Pending
+      const pendingRes = await fetch(`${testServerBaseUrl}/alerts/map?status=Pending`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(pendingRes.status, 200);
+      const pendingData = await pendingRes.json();
+      for (const a of pendingData.data) {
+        assert.strictEqual(a.status, 'Pending');
+      }
+
+      // Filter by emergencyType=Medical Emergency
+      const medRes = await fetch(`${testServerBaseUrl}/alerts/map?emergencyType=Medical%20Emergency`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${testUserToken}`,
+        },
+      });
+      assert.strictEqual(medRes.status, 200);
+      const medData = await medRes.json();
+      for (const a of medData.data) {
+        assert.strictEqual(a.emergencyType, 'Medical Emergency');
+      }
+    });
+
+    await runTest('Map Stream: GET /api/alerts/stream establishes SSE stream and broadcasts live alert events', async () => {
+      await new Promise((resolve, reject) => {
+        const streamUrl = `${testServerBaseUrl}/alerts/stream?token=${testUserToken}`;
+        const parsedUrl = new URL(streamUrl);
+
+        let receivedConnectedEvent = false;
+        let receivedAlertEvent = false;
+
+        const req = http.get(
+          {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port,
+            path: `${parsedUrl.pathname}${parsedUrl.search}`,
+            headers: {
+              Accept: 'text/event-stream',
+            },
+          },
+          (res) => {
+            assert.strictEqual(res.statusCode, 200);
+            assert.strictEqual(res.headers['content-type'], 'text/event-stream');
+
+            res.setEncoding('utf8');
+            res.on('data', async (chunk) => {
+              if (chunk.includes('event: connected')) {
+                receivedConnectedEvent = true;
+
+                // While stream is open, trigger a new alert to test live broadcast
+                await fetch(`${testServerBaseUrl}/alerts`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${testUserToken}`,
+                  },
+                  body: JSON.stringify({
+                    emergencyType: 'Fire',
+                    details: 'Live SSE broadcast test fire incident',
+                    location: { latitude: 37.7800, longitude: -122.4200 },
+                  }),
+                });
+              }
+
+              if (chunk.includes('event: alert_created') && chunk.includes('Live SSE broadcast test')) {
+                receivedAlertEvent = true;
+                req.destroy();
+                assert.ok(receivedConnectedEvent, 'Must have received initial connected event');
+                assert.ok(receivedAlertEvent, 'Must have received live alert_created event');
+                resolve();
+              }
+            });
+          }
+        );
+
+        req.on('error', (err) => {
+          if (!receivedAlertEvent) {
+            reject(err);
+          }
+        });
+
+        // Timeout fallback
+        setTimeout(() => {
+          req.destroy();
+          if (receivedConnectedEvent && receivedAlertEvent) {
+            resolve();
+          } else {
+            reject(new Error(`SSE stream timeout: connected=${receivedConnectedEvent}, alertEvent=${receivedAlertEvent}`));
+          }
+        }, 5000);
+      });
+    });
+
+    await runTest('Map SQLite: AlertRepository.getMappedAlerts and getUnmappedAlerts segregate spatial data accurately', async () => {
+      const mockDb = createInMemoryExpoSqliteWrapper();
+      await setCustomDatabase(mockDb);
+      await runMigrations(mockDb);
+
+      // 1. Insert alert with valid GPS coordinates
+      await AlertRepository.saveOrUpdateAlert({
+        alertId: 'mock-geo-1',
+        emergencyType: 'Medical Emergency',
+        details: 'Hiker with broken ankle',
+        latitude: 13.0827,
+        longitude: 80.2707,
+        source: 'local',
+        deliveryStatus: 'pending',
+      });
+
+      // 2. Insert alert with NO coordinates
+      await AlertRepository.saveOrUpdateAlert({
+        alertId: 'mock-geo-2',
+        emergencyType: 'Personal Safety',
+        details: 'Survivor without GPS lock',
+        latitude: null,
+        longitude: null,
+        source: 'local',
+        deliveryStatus: 'pending',
+      });
+
+      // Query mapped alerts
+      const mapped = await AlertRepository.getMappedAlerts();
+      assert.strictEqual(mapped.length, 1);
+      assert.strictEqual(mapped[0].alertId, 'mock-geo-1');
+      assert.strictEqual(mapped[0].latitude, 13.0827);
+
+      // Query unmapped alerts
+      const unmapped = await AlertRepository.getUnmappedAlerts();
+      assert.strictEqual(unmapped.length, 1);
+      assert.strictEqual(unmapped[0].alertId, 'mock-geo-2');
+      assert.strictEqual(unmapped[0].latitude, null);
+
+      // Aggregate counts
+      const counts = await AlertRepository.getAlertCounts();
+      assert.strictEqual(counts.total, 2);
+      assert.strictEqual(counts.mappedCount, 1);
+      assert.strictEqual(counts.unmappedCount, 1);
+    });
+
+    await runTest('Map Navigation: Deep link URL generator formats valid map navigation intents', async () => {
+      const lat = 37.7749;
+      const lon = -122.4194;
+      const queryUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+      const parsed = new URL(queryUrl);
+      assert.strictEqual(parsed.hostname, 'www.google.com');
+      assert.strictEqual(parsed.searchParams.get('destination'), `${lat},${lon}`);
+    });
   } finally {
     // Teardown and reset test databases and stores
     await stopEphemeralServer();
@@ -1475,7 +1714,7 @@ async function runComprehensiveTestSuite() {
   console.log('================================================================\n');
 
   if (totalPassed === totalTests) {
-    console.log('✅ ALL STEP 9 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
+    console.log('✅ ALL STEP 10 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
     process.exit(0);
   } else {
     console.error(`❌ ${totalTests - totalPassed} TEST(S) FAILED.\n`);

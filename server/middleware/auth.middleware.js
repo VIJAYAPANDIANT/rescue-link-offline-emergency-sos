@@ -9,8 +9,27 @@ const config = require('../config/env');
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
+  let token = null;
 
-  if (!authHeader) {
+  if (authHeader) {
+    // Expecting format: "Bearer <token>"
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0] !== 'Bearer') {
+      return res.status(401).json({
+        success: false,
+        error: {
+          code: 'TOKEN_FORMAT_INVALID',
+          message: 'Invalid authorization format. Expected: Bearer <token>',
+        },
+      });
+    }
+    token = parts[1];
+  } else if (req.query && req.query.token) {
+    // Fallback for SSE / EventSource streams that cannot set headers
+    token = req.query.token;
+  }
+
+  if (!token) {
     return res.status(401).json({
       success: false,
       error: {
@@ -19,20 +38,6 @@ const authenticateToken = (req, res, next) => {
       },
     });
   }
-
-  // Expecting format: "Bearer <token>"
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    return res.status(401).json({
-      success: false,
-      error: {
-        code: 'TOKEN_FORMAT_INVALID',
-        message: 'Invalid authorization format. Expected: Bearer <token>',
-      },
-    });
-  }
-
-  const token = parts[1];
 
   try {
     const decoded = jwt.verify(token, config.jwt.secret);

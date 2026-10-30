@@ -51,11 +51,27 @@ class ContactStore {
           const tempFile = `${CONTACTS_FILE}.${crypto.randomBytes(4).toString('hex')}.tmp`;
           const jsonPayload = JSON.stringify(contactsList, null, 2);
           await fs.promises.writeFile(tempFile, jsonPayload, 'utf8');
-          await fs.promises.rename(tempFile, CONTACTS_FILE);
-          resolve();
+
+          let renamed = false;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              await fs.promises.rename(tempFile, CONTACTS_FILE);
+              renamed = true;
+              break;
+            } catch (err) {
+              if ((err.code === 'EPERM' || err.code === 'EBUSY') && attempt < 4) {
+                await new Promise((r) => setTimeout(r, 25 * (attempt + 1)));
+              } else {
+                try { await fs.promises.unlink(tempFile); } catch (e) {}
+                throw err;
+              }
+            }
+          }
+
+          if (renamed) resolve();
         })
         .catch((err) => {
-          console.error('[ContactStore] Error writing contacts.json:', err);
+          console.error('[ContactStore] Error writing contacts.json:', err.message);
           reject(err);
         });
     });

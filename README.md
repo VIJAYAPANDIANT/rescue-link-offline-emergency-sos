@@ -6,7 +6,7 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–9 Completed: Emergency Contact Management & SOS Notifications)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–10 Completed: Live Emergency Map & Incident Tracking)**
 
 ---
 
@@ -14,7 +14,7 @@
 
 **RescueLink** is a mission-critical, offline-first mobile emergency distress response system. During major natural disasters (earthquakes, cyclones, floods), wilderness expeditions, or catastrophic power grid collapse, cellular infrastructure and commercial internet services often fail entirely.
 
-RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence** and an automated **multi-channel emergency contact notification pipeline**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend, which automatically dispatches distress alerts via Email (SMTP) and SMS (Twilio) to designated emergency contacts.
+RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence**, an automated **multi-channel emergency contact notification pipeline**, and a **live interactive emergency map with real-time situational tracking**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend, which automatically dispatches distress alerts via Email (SMTP) and SMS (Twilio) to designated emergency contacts and streams active incidents to responders' live maps in real time.
 
 ---
 
@@ -22,7 +22,7 @@ RescueLink bridges this communication gap through a **multi-device Bluetooth Low
 
 > [!IMPORTANT]
 > **RescueLink is an academic engineering project.**
-> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, durable offline SQLite storage, and multi-channel notifications, it is **NOT certified by government public safety answering points (PSAPs)**.
+> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, durable offline SQLite storage, multi-channel notifications, and live incident mapping, it is **NOT certified by government public safety answering points (PSAPs)**.
 > - This software is **NOT a replacement for certified 911, 112, or local emergency dispatch hotlines**.
 > - In an active emergency where cellular networks or landlines are available, always contact official emergency services immediately.
 
@@ -41,10 +41,10 @@ RescueLink bridges this communication gap through a **multi-device Bluetooth Low
 | **Local Storage** | `expo-sqlite` (v15.1.4) | Offline WAL persistence, schema migrations (v1-v4), outbox & contacts | ✅ Completed (Steps 5, 8 & 9) |
 | **Connectivity & NetInfo** | `@react-native-community/netinfo` (v11.4.1) | Live network monitoring & internet reachability verification | ✅ Completed (Step 6) |
 | **Cloud Synchronization** | Opportunistic Sync Engine + Express REST | Outbox batch processing, exponential backoff, & BLE relay attribution | ✅ Completed (Step 6) |
-| **System Integration** | End-to-End Relay + Security Audit + 44 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
+| **System Integration** | End-to-End Relay + Security Audit + 50 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
 | **Multi-Device SOS Relay** | Controlled BLE Epidemic Mesh Forwarding | Multi-hop routing (A -> B -> C), hop limits, tamper hash, TTL & rate limits | ✅ Completed (Step 8) |
 | **Emergency Contacts & Notifications**| SMTP Email + Twilio SMS + SQLite Tasks | Multi-channel dispatch, priority sorting, location consent gate & idempotency | ✅ Completed (Step 9) |
-| **Location & Maps** | GPS + Google Maps API | Real-time coordinate lock & spatial visualization | ✅ Completed (Step 1, optional) |
+| **Live Map & Situational Tracking** | `react-native-maps` (v1.18.0) + Tactical Canvas + SSE | Dual-engine interactive map, real-time SSE stream, & offline GPS radar | ✅ Completed (Step 10) |
 | **Cryptographic E2EE** | Curve25519 / X25519 Asymmetric Encryption | End-to-end encryption of sensitive characteristic details | ⏳ Planned (Next Phase) |
 
 ---
@@ -67,12 +67,14 @@ c:\Offline Emergency SOS/
 │       │   ├── EmergencyTypeSelector.js # Category picker (Medical, Fire, Accident, etc.)
 │       │   ├── PrimaryButton.js       # Accessible buttons (Danger, Outline, Success, Warning)
 │       │   ├── EmptyState.js          # Zero-data state with actions
+│       │   ├── EmergencyMapView.js    # Step 10: Dual-engine Map (react-native-maps + Tactical Radar fallback)
 │       │   └── index.js
 │       ├── screens/                   # Core application screens
 │       │   ├── HomeScreen.js          # Emergency dashboard with live subsystem sensors
 │       │   ├── SendSOSScreen.js       # SOS composer, offline draft, BLE broadcaster & contacts preview
 │       │   ├── NearbyDevicesScreen.js # BLE receiver, SOS reader, ACK sender, & relay forwarder
 │       │   ├── EmergencyHistoryScreen.js # SQLite-backed persistent ledger & mesh relay hub
+│       │   ├── LiveEmergencyMapScreen.js # Step 10: Live incident tracking map, SSE telemetry & deep link
 │       │   ├── EmergencyContactsScreen.js # Step 9: Emergency contacts manager (Priority, Add/Edit)
 │       │   ├── NotificationHistoryScreen.js # Step 9: Multi-channel delivery logs & test gateway
 │       │   ├── LoginScreen.js         # Responder JWT authentication
@@ -821,9 +823,75 @@ Adds persistent offline storage for contacts and delivery task audits:
 
 ---
 
+## 🗺️ Live Emergency Map & Incident Tracking (Step 10)
+
+RescueLink provides a dual-engine geospatial emergency tracking subsystem designed for operational awareness under both connected and disconnected field conditions. Responders can visualize reported distress incidents, track spatial clusters, inspect segregated transmission states, and launch GPS navigation directly to victims.
+
+```mermaid
+graph TD
+    subgraph UI ["Incident Command Map (Mobile)"]
+        LiveMapScreen["LiveEmergencyMapScreen"]
+        LiveMapScreen --> EngineChoice{"Native Map Available?<br/>(Google Play Services)"}
+        EngineChoice -- Yes --> NativeEngine["react-native-maps<br/>(Google Maps Engine)"]
+        EngineChoice -- No --> RadarEngine["Tactical Vector Radar Canvas<br/>(Concentric Range Rings & Crosshairs)"]
+        
+        LiveMapScreen --> FilterBar["Category Filter Bar<br/>(Medical, Fire, Accident, Drill, etc.)"]
+        LiveMapScreen --> UnmappedDrawer["Unmapped Incidents Review Drawer<br/>(Quarantined zero-coordinate alerts)"]
+        LiveMapScreen --> BottomDrawer["Interactive Incident Bottom Sheet<br/>• Separated States (Delivery, ACK, Sync, Relay)<br/>• External Navigation Deep Link"]
+    end
+
+    subgraph Streaming ["Real-Time Telemetry & Failover Engine"]
+        APIClient["apiClient.subscribeToIncidents"]
+        APIClient --> NetCheck{"Stream Capability?"}
+        NetCheck -- "SSE Supported" --> SSEStream["GET /api/alerts/stream?token=JWT<br/>🟢 Live (Real-Time SSE)"]
+        NetCheck -- "Stream Interrupted" --> PollStream["GET /api/alerts/map<br/>🟡 Periodic Polling (15s)"]
+        NetCheck -- "Offline / No Radio" --> SQLiteLocal["Local SQLite WAL Cache<br/>⚪ Offline (SQLite Cache)"]
+    end
+
+    subgraph BackendGateway ["Express REST & Event Gateway"]
+        SSEStream --> ExpressSSE["alert.controller.streamAlerts<br/>(text/event-stream + keep-alive)"]
+        PollStream --> ExpressMap["alert.controller.getMappedAlerts<br/>(Spatial filter & Summary counters)"]
+    end
+```
+
+### 1. Dual-Engine Map Architecture & Seamless Fallback
+- **Native Google Maps (`react-native-maps` v1.18.0)**: Hardware-accelerated map rendering with custom styled markers, camera bounds fitting, user geolocation centering, and tilt/pan controls. Configured with `com.google.android.geo.API_KEY` in `mobile/app.json`.
+- **Tactical Vector Radar Fallback**: In Expo Go, web previews, or Android emulators lacking Google Play Services, the app seamlessly activates a **tactical radar canvas**. The canvas computes normalized mathematical coordinates relative to the user's location or the bounding box centroid, rendering concentric distance rings, tactical crosshairs, and color-coded pulse pins without network dependencies or native binary crashes.
+
+### 2. Standardized Incident Marker Visual Palette
+
+| Emergency Type | Marker Color | Hex Code | Icon | Description |
+|---|---|---|---|---|
+| **Medical** | Crimson Red | `#EF4444` | 🏥 | Critical trauma, medical emergencies, unconsciousness |
+| **Fire** | Flame Orange | `#F97316` | 🔥 | Structure fires, wildfire proximity, smoke hazard |
+| **Accident** | Sunflower Yellow | `#EAB308` | ⚠️ | Vehicle collisions, structural collapse, physical entrapment |
+| **Personal Safety** | Royal Purple | `#8B5CF6` | 🛡️ | Immediate threat, violence, hostile encounter |
+| **Test / Drill** | Emerald Green | `#10B981` | 🧪 | Non-emergency drills and system calibration testing |
+| **Other / General** | Ocean Blue | `#3B82F6` | ❓ | General distress or uncategorized hazards |
+
+### 3. Strict Coordinate Integrity & Unmapped Incidents Drawer
+- **Zero Coordinate Fabrication**: RescueLink **never** plots an alert at `(0, 0)` or fabricates coordinates if the survivor triggered an SOS without GPS lock.
+- **Unmapped Drawer**: Alerts lacking valid latitude/longitude coordinates (`[-90, 90]`, `[-180, 180]`) are cleanly separated into `unmappedIncidents`. A warning badge (`⚠️ N Unmapped Incidents`) in the map header allows responders to open a dedicated review drawer to inspect and triage these incidents without corrupting spatial visual clarity.
+
+### 4. Live Real-Time Updates & Telemetry Indicators
+- **Server-Sent Events (SSE)**: Responders maintain an active `GET /api/alerts/stream?token=<JWT>` connection. Ingested or updated distress alerts are immediately pushed down to the mobile client in real time.
+- **Automatic Polling Failover**: If the persistent event stream drops or proxy restrictions block chunked HTTP transfer, the client automatically degrades to periodic 15-second polling of `GET /api/alerts/map`.
+- **Clear Situational Telemetry Badges**:
+  - 🟢 **Live (Real-Time SSE)**: Persistent HTTP streaming active.
+  - 🟡 **Periodic Polling (15s)**: Periodic synchronization fallback active.
+  - ⚪ **Offline (SQLite Cache)**: Disconnected from cloud; displaying cached local SQLite incidents.
+
+### 5. Incident Details & Navigation Deep Linking
+Tapping any incident marker opens an incident details bottom sheet:
+- Displays emergency type, exact GPS coordinates, timestamp, and incident description.
+- Clearly separates all four lifecycle states: **Delivery Status**, **Acknowledgment Receipt**, **Cloud Synchronization**, and **Relay Hop Count**.
+- **External Map Navigation**: "Navigate with Maps" button automatically triggers platform-native navigation (`geo:lat,lng?q=lat,lng` on Android or `https://maps.google.com/?q=lat,lng` on iOS/Web), opening turn-by-turn driving or walking directions.
+
+---
+
 ## 🧪 Automated Verification & Test Results
 
-The project includes an end-to-end automated integration test suite covering all 7 core subsystem modules:
+The project includes an end-to-end automated integration test suite covering all 8 core subsystem modules:
 
 ```bash
 # Run complete test suite from repository root:
@@ -833,7 +901,7 @@ node tests/run-all-tests.mjs
 cd server && npm test
 ```
 
-### Verified Test Suite (44/44 Passing)
+### Verified Test Suite (50/50 Passing)
 
 | Test Module | Test Scenario | Result |
 |---|---|---|
@@ -881,6 +949,12 @@ cd server && npm test
 | | SOS alert creation dispatches notifications to enabled contacts with idempotency | **PASS** |
 | | Mobile SQLite Migration v4 creates contacts and notification_tasks tables | **PASS** |
 | | Notification history queries isolate records by user and support test dispatch | **PASS** |
+| **Module 8: Live Emergency Map & Incident Tracking** | `GET /api/alerts/map` returns mapped incidents with valid coordinates, isolates unmapped, and counts | **PASS** |
+| | `GET /api/alerts/map` respects category filters and query params correctly | **PASS** |
+| | `GET /api/alerts/stream` establishes valid SSE stream (`text/event-stream`), keep-alives, and token auth | **PASS** |
+| | SQLite repository `getMappedAlerts` retrieves incidents with coordinates and filters out unmapped alerts | **PASS** |
+| | Coordinate bounding box validator rejects out-of-range coordinates, zero-coordinate fabrication, and NaN values | **PASS** |
+| | Map deep-linking URL generator constructs valid navigation URLs for Google Maps and Apple Maps | **PASS** |
 
 ---
 
@@ -952,9 +1026,20 @@ cd server && npm test
   - SQLite Migration v4: created `contacts` and `notification_tasks` tables for offline tracking
   - Mobile screens: Emergency Contacts manager with Add/Edit modal, Notification History log viewer with live delivery status, and Send SOS contact preview
   - Comprehensive automated integration tests: Module 7 (9 tests, 44/44 total passing across test suite)
+- [x] **Step 10: Live Emergency Map & Incident Tracking** (Completed)
+  - Dual-engine interactive map architecture: `react-native-maps` (v1.18.0) + Tactical Vector Radar Canvas fallback
+  - Android map permissions and Google Play Services API key configuration in `app.json` and `.env.example`
+  - Explicit user location permission gate with GPS acquisition and "My Location" center button
+  - Standardized color-coded marker palette across Medical, Fire, Accident, Safety, Drill, and General categories
+  - Strict coordinate bounding box validation and zero-coordinate quarantine in dedicated Unmapped Incidents Drawer
+  - Incident details bottom sheet with separated delivery, acknowledgment, sync, and relay hop state badges
+  - Turn-by-turn external navigation deep linking via Google Maps (`geo:lat,lng` / URL scheme) and Apple Maps
+  - Live real-time incident updates via Server-Sent Events (SSE) `GET /api/alerts/stream` with 15s polling failover
+  - Clear situational telemetry badges: 🟢 Live (SSE), 🟡 Periodic Polling, ⚪ Offline (SQLite Cache)
+  - Full automated integration test suite: Module 8 (6 tests, 50/50 total passing across 8 modules)
 - [ ] **Future Enhancements (Post-Prototype)**
   - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
-  - Live GIS interactive distress feed for emergency operations command centers
+  - Multi-region clustered WebSocket gateways for global PSAP ingestion dispatch
 
 
 ---

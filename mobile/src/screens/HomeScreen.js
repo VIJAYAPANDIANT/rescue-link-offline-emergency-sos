@@ -305,6 +305,22 @@ export const HomeScreen = ({ navigation }) => {
           <TouchableOpacity
             style={[styles.actionCard, shadows.card]}
             activeOpacity={0.75}
+            onPress={() => navigation.navigate('LiveMap')}
+            accessibilityRole="button"
+            accessibilityLabel="View Live Emergency Map"
+          >
+            <View style={[styles.actionIconCircle, { backgroundColor: '#E0F2FE' }]}>
+              <Text style={styles.actionIcon}>🗺️</Text>
+            </View>
+            <Text style={styles.actionCardTitle}>Live Incident Map</Text>
+            <Text style={styles.actionCardSubtitle}>
+              Situational map & triage tracking
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionCard, shadows.card]}
+            activeOpacity={0.75}
             onPress={() => navigation.navigate('NearbyDevices')}
             accessibilityRole="button"
             accessibilityLabel="View Nearby Devices"

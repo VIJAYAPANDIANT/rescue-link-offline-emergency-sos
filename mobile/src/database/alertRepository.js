@@ -362,7 +362,9 @@ export class AlertRepository {
         SUM(CASE WHEN source = 'server' THEN 1 ELSE 0 END) as serverCount,
         SUM(CASE WHEN ackStatus = 'acknowledged' THEN 1 ELSE 0 END) as ackCount,
         SUM(CASE WHEN syncStatus = 'pending_sync' THEN 1 ELSE 0 END) as pendingSyncCount,
-        SUM(CASE WHEN deliveryStatus = 'Resolved' THEN 1 ELSE 0 END) as resolvedCount
+        SUM(CASE WHEN deliveryStatus = 'Resolved' THEN 1 ELSE 0 END) as resolvedCount,
+        SUM(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN 1 ELSE 0 END) as mappedCount,
+        SUM(CASE WHEN latitude IS NULL OR longitude IS NULL THEN 1 ELSE 0 END) as unmappedCount
       FROM alerts;
     `);
 
@@ -374,7 +376,57 @@ export class AlertRepository {
       ackCount: 0,
       pendingSyncCount: 0,
       resolvedCount: 0,
+      mappedCount: 0,
+      unmappedCount: 0,
     };
+  }
+
+  /**
+   * Retrieve all alerts with valid GPS coordinates for the Live Emergency Map.
+   *
+   * @param {object} [options]
+   * @param {string} [options.deliveryStatus]
+   * @param {string} [options.emergencyType]
+   * @returns {Promise<Array>}
+   */
+  static async getMappedAlerts({ deliveryStatus = null, emergencyType = null } = {}) {
+    const db = await getDatabase();
+    let query = `
+      SELECT * FROM alerts
+      WHERE latitude IS NOT NULL
+        AND longitude IS NOT NULL
+        AND latitude BETWEEN -90 AND 90
+        AND longitude BETWEEN -180 AND 180
+    `;
+    const params = [];
+
+    if (deliveryStatus && deliveryStatus !== 'ALL' && deliveryStatus !== 'all') {
+      query += ' AND deliveryStatus = ?';
+      params.push(deliveryStatus);
+    }
+
+    if (emergencyType && emergencyType !== 'ALL' && emergencyType !== 'all') {
+      query += ' AND emergencyType = ?';
+      params.push(emergencyType);
+    }
+
+    query += ' ORDER BY createdAt DESC;';
+    return db.getAllAsync(query, params);
+  }
+
+  /**
+   * Retrieve all alerts that have no GPS coordinates (unmapped).
+   *
+   * @returns {Promise<Array>}
+   */
+  static async getUnmappedAlerts() {
+    const db = await getDatabase();
+    const query = `
+      SELECT * FROM alerts
+      WHERE latitude IS NULL OR longitude IS NULL
+      ORDER BY createdAt DESC;
+    `;
+    return db.getAllAsync(query);
   }
 }
 

@@ -5,6 +5,7 @@
  */
 
 const alertService = require('../services/alert.service');
+const alertStore = require('../services/alertStore');
 
 /**
  * Create a new emergency alert
@@ -127,10 +128,79 @@ const syncAlerts = async (req, res, next) => {
   }
 };
 
+/**
+ * Retrieve all emergency incidents with valid GPS coordinates for the Live Map
+ * @route GET /api/alerts/map
+ * @access Protected (JWT required)
+ */
+const getMappedAlerts = async (req, res, next) => {
+  try {
+    const { status, emergencyType, since } = req.query;
+    const result = await alertService.getMappedAlerts({ status, emergencyType, since });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Mapped emergency incidents retrieved successfully',
+      data: result.alerts,
+      summary: result.summary,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Server-Sent Events (SSE) live feed of emergency alert events
+ * @route GET /api/alerts/stream
+ * @access Protected (JWT required in Header or query param ?token=...)
+ */
+const streamAlerts = (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  // Send initial connected confirmation event
+  res.write(
+    `event: connected\ndata: ${JSON.stringify({
+      message: 'RescueLink Live Incident Stream Active',
+      serverTime: new Date().toISOString(),
+    })}\n\n`
+  );
+
+  const onAlertEvent = (event) => {
+    try {
+      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event.alert)}\n\n`);
+    } catch (e) {
+      // Socket stream closed
+    }
+  };
+
+  alertStore.on('alert_event', onAlertEvent);
+
+  // Keep-alive heartbeat every 25 seconds
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': keep-alive\n\n');
+    } catch (e) {
+      clearInterval(heartbeat);
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    alertStore.removeListener('alert_event', onAlertEvent);
+  });
+};
+
 module.exports = {
   createAlert,
   getAlerts,
   getAlertById,
   updateAlertStatus,
   syncAlerts,
+  getMappedAlerts,
+  streamAlerts,
 };

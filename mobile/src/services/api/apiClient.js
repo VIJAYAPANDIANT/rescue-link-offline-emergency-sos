@@ -642,6 +642,132 @@ class ApiClient {
       };
     }
   }
+
+  /**
+   * Retrieve all emergency incidents with valid GPS coordinates for the Live Map.
+   */
+  async getMappedAlerts({ status, emergencyType, since } = {}) {
+    try {
+      const queryParams = new URLSearchParams();
+      if (status && status !== 'all' && status !== 'ALL') queryParams.append('status', status);
+      if (emergencyType && emergencyType !== 'all') queryParams.append('emergencyType', emergencyType);
+      if (since) queryParams.append('since', since);
+
+      const url = `${this.baseUrl}/alerts/map${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error?.message || data.message || 'Failed to retrieve mapped alerts.',
+          status: response.status,
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data || [],
+        summary: data.summary || { total: 0, mappedCount: 0, unmappedCount: 0 },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message || 'Network error fetching mapped alerts.',
+      };
+    }
+  }
+
+  /**
+   * Subscribe to live incident updates with automatic failover between
+   * Server-Sent Events (SSE) and periodic polling.
+   *
+   * @param {object} callbacks
+   * @param {function} callbacks.onIncidentUpdate - Invoked with updated/new alert
+   * @param {function} callbacks.onStatusChange - Invoked with 'live' | 'polling' | 'offline'
+   * @param {number} [pollIntervalMs=15000] - Polling interval in ms
+   * @returns {function} Cleanup/unsubscribe function
+   */
+  subscribeToIncidents({ onIncidentUpdate, onStatusChange, pollIntervalMs = 15000 }) {
+    let isSubscribed = true;
+    let pollTimer = null;
+    let lastSyncTimestamp = new Date().toISOString();
+
+    const triggerPoll = async () => {
+      if (!isSubscribed) return;
+      try {
+        const res = await this.getMappedAlerts({ since: lastSyncTimestamp });
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          lastSyncTimestamp = new Date().toISOString();
+          for (const alert of res.data) {
+            onIncidentUpdate(alert);
+          }
+        }
+        if (isSubscribed) {
+          onStatusChange('polling');
+        }
+      } catch (e) {
+        if (isSubscribed) {
+          onStatusChange('offline');
+        }
+      }
+    };
+
+    // If EventSource is available in runtime (e.g. Web or polyfill)
+    if (typeof EventSource !== 'undefined') {
+      const streamUrl = `${this.baseUrl}/alerts/stream?token=${encodeURIComponent(this.token || '')}`;
+      let eventSource = null;
+      try {
+        eventSource = new EventSource(streamUrl);
+
+        eventSource.addEventListener('connected', () => {
+          if (isSubscribed) onStatusChange('live');
+        });
+
+        const handleEvent = (e) => {
+          if (!isSubscribed) return;
+          try {
+            const alert = JSON.parse(e.data);
+            onIncidentUpdate(alert);
+          } catch (err) {}
+        };
+
+        eventSource.addEventListener('alert_created', handleEvent);
+        eventSource.addEventListener('alert_updated', handleEvent);
+        eventSource.addEventListener('alert_synced', handleEvent);
+
+        eventSource.onerror = () => {
+          if (isSubscribed) {
+            onStatusChange('polling');
+            if (!pollTimer) {
+              pollTimer = setInterval(triggerPoll, pollIntervalMs);
+            }
+          }
+        };
+
+        return () => {
+          isSubscribed = false;
+          if (eventSource) eventSource.close();
+          if (pollTimer) clearInterval(pollTimer);
+        };
+      } catch (srcErr) {
+        // Fall back to polling
+      }
+    }
+
+    // Default: Adaptive periodic polling with clear state reporting
+    onStatusChange('polling');
+    pollTimer = setInterval(triggerPoll, pollIntervalMs);
+
+    return () => {
+      isSubscribed = false;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }
 }
 
 export const apiClient = new ApiClient();

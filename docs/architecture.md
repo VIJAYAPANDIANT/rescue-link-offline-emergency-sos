@@ -272,24 +272,94 @@ CREATE TABLE IF NOT EXISTS notification_tasks (
 
 ---
 
-## 8. Comprehensive Automated Test Matrix (44 Tests)
+## 8. Live Emergency Map & Situational Incident Tracking Architecture (Step 10)
 
-The test runner (`tests/run-all-tests.mjs`) exercises all 7 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
+RescueLink incorporates a dual-mode geographic situational awareness interface designed to operate reliably across production devices, emulators, web previews, and fully offline environments:
+
+```mermaid
+graph TD
+    subgraph MobileApp ["Mobile Incident Command Interface"]
+        MapView["EmergencyMapView Switcher"]
+        MapView -->|"Google Play Services / Native"| NativeMap["react-native-maps<br/>(Google Maps Engine)"]
+        MapView -->|"Expo Go / Web / No Play Services"| RadarMap["Tactical Vector Radar Canvas<br/>(100% Offline Safe)"]
+        
+        LiveMapScreen["LiveEmergencyMapScreen"]
+        LiveMapScreen --> MapView
+        LiveMapScreen --> FilterBar["Category Filter Bar<br/>(All, Medical, Fire, Accident, etc.)"]
+        LiveMapScreen --> GPSButton["User GPS Button<br/>(Permission Gated)"]
+        LiveMapScreen --> UnmappedModal["Unmapped Incidents Drawer<br/>(Alerts lacking valid GPS)"]
+        LiveMapScreen --> BottomSheet["Incident Details Sheet<br/>• Separated States<br/>• External Maps Deep Link"]
+    end
+
+    subgraph DataFeeds ["Data Feeds & Connectivity State"]
+        LocalDB[("Local SQLite WAL<br/>(getMappedAlerts / getUnmappedAlerts)")] --> LiveMapScreen
+        
+        ConnState{"Connectivity & Stream Status"}
+        ConnState -->|"Online & SSE Stream Open"| SSEFeed["SSE: GET /api/alerts/stream<br/>🟢 Live (Real-Time SSE)"]
+        ConnState -->|"Online & SSE Fallback"| PollFeed["Poll: GET /api/alerts/map<br/>🟡 Periodic Polling (15s)"]
+        ConnState -->|"Offline / Flight Mode"| CacheFeed["Local Cache Only<br/>⚪ Offline (SQLite Cache)"]
+    end
+
+    subgraph BackendGateway ["RescueLink Express Gateway"]
+        SSEFeed --> StreamCtrl["alert.controller.streamAlerts<br/>(text/event-stream + keep-alive)"]
+        PollFeed --> MapCtrl["alert.controller.getMappedAlerts<br/>(Summary Counts + Mapped Filter)"]
+        StreamCtrl --> AlertStore[("Central Alert Storage")]
+        MapCtrl --> AlertStore
+    end
+```
+
+### 8.1 Dual-Engine Map Rendering & Graceful Fallback
+- **Native Map Engine**: Uses `react-native-maps` (v1.18.0) backed by Google Play Services on Android (`com.google.android.geo.API_KEY`). Provides interactive vector tiles, pinch-to-zoom, compass bearing, and satellite/terrain layers.
+- **Tactical Vector Radar Fallback**: In Expo Go, web browsers, or emulators without Google Play Services or where native binary modules are unavailable, the system automatically falls back to an SVG/Canvas-style **Tactical Vector Radar View**. This tactical view normalizes incident latitudes and longitudes relative to the user's location or the incident bounding box, rendering concentric tactical distance rings, radar crosshairs, and color-coded pulse pins without crashing or requiring network access.
+
+### 8.2 Strict Coordinate Validation & Unmapped Incident Isolation
+- **No Coordinate Fabrication**: Distress incidents without valid GPS coordinates are **never** plotted at `(0, 0)` or guessed.
+- **Unmapped Incidents Drawer**: Incidents where `latitude` or `longitude` is missing or out of valid bounds (`[-90, 90]`, `[-180, 180]`) are segregated into `unmappedIncidents`. The UI displays a warning banner and quick-access badge (`⚠️ N Unmapped Incidents`) allowing responders to inspect the unmapped distress records in a dedicated modal drawer.
+
+### 8.3 Standardized Incident Color Coding & Visual Hierarchy
+Emergency pins are color-coded uniformly across the native map and tactical vector canvas:
+
+| Emergency Type | Marker Color | Hex Code | Icon |
+|---|---|---|---|
+| **Medical** | Crimson Red | `#EF4444` | 🏥 |
+| **Fire** | Amber Orange | `#F97316` | 🔥 |
+| **Accident** | Sunflower Yellow | `#EAB308` | ⚠️ |
+| **Personal Safety** | Royal Purple | `#8B5CF6` | 🛡️ |
+| **Test / Drill** | Emerald Green | `#10B981` | 🧪 |
+| **Other / General** | Ocean Blue | `#3B82F6` | ❓ |
+
+### 8.4 Live Real-Time Ingestion: SSE + Polling Fallover
+- **Server-Sent Events (SSE)**: Responders connect to `GET /api/alerts/stream?token=<JWT>`. The server holds open an HTTP `text/event-stream` connection, periodically transmitting keep-alive comments (`: keep-alive`) and immediately streaming newly ingested or updated incidents (`event: alert_created`, `event: alert_updated`).
+- **Periodic Polling Failover**: If the mobile device or network proxy does not support persistent HTTP streaming, the client seamlessly falls back to 15-second polling of `GET /api/alerts/map`.
+- **Live Status Badges**: The screen explicitly displays current synchronization telemetry so responders always know data freshness:
+  - 🟢 **Live (Real-Time SSE)**: Active persistent HTTP event stream.
+  - 🟡 **Periodic Polling (15s)**: Fallback polling active.
+  - ⚪ **Offline (SQLite Cache)**: Operating entirely on local SQLite database cache.
+
+### 8.5 Incident Details & Deep Linking
+Selecting any map marker opens an actionable bottom sheet detailing:
+- Emergency Type, Alert ID, and relative/absolute timestamp.
+- Originator metadata and raw GPS coordinates with high precision.
+- **Separated State Indicators**: Delivery status, acknowledgment confirmation, cloud sync state, and relay hop count ($n$ hops).
+- **Navigation Deep Link**: "Navigate with Maps" button launching Google Maps / Apple Maps directions (`geo:lat,lng?q=lat,lng` / `https://maps.google.com/?q=lat,lng`).
+
+---
+
+## 9. Comprehensive Automated Test Matrix (50 Tests)
+
+The test runner (`tests/run-all-tests.mjs`) exercises all 8 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
 
 1. **Module 1**: Authentication, JWT & Security (6 tests)
 2. **Module 2**: Emergency Alert REST API & Validation (5 tests)
 3. **Module 3**: BLE Protocol & Sanitization (3 tests)
-4. **Module 4**: SQLite Offline Persistence & Migrations v1–v3 (4 tests)
+4. **Module 4**: SQLite Offline Persistence & Migrations v1–v4 (4 tests)
 5. **Module 5**: Offline Outbox & Cloud Synchronization (7 tests)
 6. **Module 6**: Multi-Device SOS Relay Network (10 tests)
 7. **Module 7**: Emergency Contact Management & SOS Notifications (9 tests)
-   - Input validation (name, phone, email, priority boundaries)
-   - User 1 contact creation and priority sorting (Primary before Secondary)
-   - Contact detail updates and enabled toggle filtering
-   - Ownership isolation (User 2 receives 404 attempting to view/modify User 1 contacts)
-   - Contact deletion
-   - Location sharing consent gate (Google Maps link present only when consent granted)
-   - Credential scrubbing (zero tokens, passwords, or secrets in notification text)
-   - Automated non-blocking notification dispatch on SOS alert creation with idempotency
-   - Mobile SQLite Migration v4 verification (`contacts` & `notification_tasks` tables)
-   - Notification history API queries with user isolation and test dispatch endpoint
+8. **Module 8**: Live Emergency Map & Incident Tracking (6 tests)
+   - `GET /api/alerts/map` returns mapped incidents with valid coordinates, excludes invalid GPS, and reports summary counters
+   - `GET /api/alerts/map` respects category filters and isolates unmapped alerts
+   - `GET /api/alerts/stream` establishes valid SSE connection with `text/event-stream`, keep-alive comments, and token authentication
+   - SQLite repository `getMappedAlerts` retrieves incidents with coordinates and filters out non-geographic alerts
+   - Coordinate bounding box validator rejects out-of-range coordinates, zero-coordinate fabrication, and malformed GPS tuples
+   - Map deep-linking URL generator constructs valid navigation URLs for Google Maps and Apple Maps
