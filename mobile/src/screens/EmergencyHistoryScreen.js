@@ -14,7 +14,8 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
 import { syncService } from '../services/sync/syncService';
-import { AlertRepository, SyncQueueRepository, ReceiptRepository } from '../database';
+import { AlertRepository, SyncQueueRepository, ReceiptRepository, RelayRepository } from '../database';
+import { relayService } from '../services/relay/relayService';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EMERGENCY_TYPES } from '../utils/constants';
@@ -46,7 +47,9 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
   const [dbError, setDbError] = useState(null);
   const [serverNotice, setServerNotice] = useState(null);
   const [resolvingId, setResolvingId] = useState(null);
+  const [forwardingRelayId, setForwardingRelayId] = useState(null);
   const [expandedAlertId, setExpandedAlertId] = useState(null);
+  const [relayStats, setRelayStats] = useState({ totalReceived: 0, totalForwarded: 0, totalDropped: 0 });
 
   // Filters
   const [sourceFilter, setSourceFilter] = useState('ALL'); // 'ALL' | 'local' | 'bluetooth' | 'server'
@@ -64,6 +67,13 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
 
       const pending = await SyncQueueRepository.getPendingCount();
       setPendingSyncCount(pending);
+
+      try {
+        const stats = await RelayRepository.getRelayStats();
+        setRelayStats(stats);
+      } catch (e) {
+        // Ignore stats error if table not yet migrated
+      }
     } catch (err) {
       console.error('[EmergencyHistoryScreen] SQLite load error:', err.message);
       setDbError(`Database Error: ${err.message}`);
@@ -72,6 +82,29 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
       setIsRefreshing(false);
     }
   }, [sourceFilter, statusFilter]);
+
+  // Handle Forward via Relay from History Screen
+  const handleForwardRelayFromHistory = async (alertItem) => {
+    const alertId = alertItem.alertId || alertItem.id;
+    setForwardingRelayId(alertId);
+
+    try {
+      const res = await relayService.forwardAlert(alertItem);
+      if (res.success) {
+        Alert.alert(
+          '📡 Distress Beacon Forwarded',
+          `Successfully re-broadcast alert over BLE mesh.\n\nHop: ${res.forwardPayload.hopCount} / ${res.forwardPayload.maxHops}\nForwarder: ${res.forwardPayload.forwarderId}`
+        );
+        await loadAlertsFromSQLite();
+      } else {
+        Alert.alert('Relay Forward Notice', res.error || 'Unable to forward alert.');
+      }
+    } catch (err) {
+      Alert.alert('Relay Error', err.message);
+    } finally {
+      setForwardingRelayId(null);
+    }
+  };
 
   // Sync with server if online & authenticated, then refresh SQLite
   const syncWithServerIfPossible = useCallback(async () => {
@@ -300,6 +333,19 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
+        {/* Step 8: Bluetooth Mesh Relay Network Activity Banner */}
+        <View style={[styles.relayBanner, shadows.card]}>
+          <View style={styles.relayBannerIconCol}>
+            <Text style={styles.relayBannerIcon}>📡</Text>
+          </View>
+          <View style={styles.relayBannerContent}>
+            <Text style={styles.relayBannerTitle}>Bluetooth Mesh Relay Network</Text>
+            <Text style={styles.relayBannerStats}>
+              {`${relayStats.totalForwarded} Forwarded · ${relayStats.totalReceived} Received · Max Hops: 3`}
+            </Text>
+          </View>
+        </View>
+
         {/* Database Error State */}
         {dbError ? (
           <View style={styles.errorBanner}>
@@ -494,6 +540,31 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                         {isSynced ? '🟢 CLOUD SYNCED' : '🟡 PENDING CLOUD SYNC'}
                       </Text>
                     </View>
+
+                    {/* Step 8 Hop Route Badge */}
+                    <View
+                      style={[
+                        styles.tagBadge,
+                        item.hopCount > 0 ? styles.tagRelayed : styles.tagDirect,
+                      ]}
+                    >
+                      <Text style={styles.tagBadgeText}>
+                        {item.hopCount > 0
+                          ? `🔁 HOP ${item.hopCount}/${item.maxHops || 3}`
+                          : '📍 DIRECT (HOP 0)'}
+                      </Text>
+                    </View>
+
+                    {/* Relay Status Badges */}
+                    {item.relayStatus === 'forwarded' ? (
+                      <View style={[styles.tagBadge, styles.tagForwarded]}>
+                        <Text style={styles.tagBadgeText}>📡 RELAY FORWARDED</Text>
+                      </View>
+                    ) : item.relayStatus === 'eligible' ? (
+                      <View style={[styles.tagBadge, styles.tagEligible]}>
+                        <Text style={styles.tagBadgeText}>⚡ RELAY ELIGIBLE</Text>
+                      </View>
+                    ) : null}
                   </View>
 
                   {/* Card Body Details */}
@@ -581,12 +652,53 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
                           <Text style={styles.auditVal}>{item.syncStatus}</Text>
                         </View>
                         <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Mesh Hop Route:</Text>
+                          <Text style={styles.auditVal}>{`Hop ${item.hopCount || 0} / ${item.maxHops || 3}`}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Forwarding Node:</Text>
+                          <Text style={styles.auditVal}>{item.forwarderId || 'None (Direct Origin)'}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Original Author:</Text>
+                          <Text style={styles.auditVal}>{item.originalSenderId || item.senderName || 'Anonymous'}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Expiration TTL:</Text>
+                          <Text style={styles.auditVal}>{item.expiresAt ? formatTimestamp(item.expiresAt) : 'None'}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Content Integrity:</Text>
+                          <Text style={styles.auditVal}>
+                            {item.integrityHash ? `Verified (Checksum: ${item.integrityHash})` : 'Legacy v1 Protocol'}
+                          </Text>
+                        </View>
+                        <View style={styles.auditRow}>
+                          <Text style={styles.auditKey}>Relay Status:</Text>
+                          <Text style={styles.auditVal}>{item.relayStatus || 'none'}</Text>
+                        </View>
+                        <View style={styles.auditRow}>
                           <Text style={styles.auditKey}>Last Updated:</Text>
                           <Text style={styles.auditVal}>{formatTimestamp(item.updatedAt)}</Text>
                         </View>
                         <Text style={styles.auditNote}>
                           🛡️ Authenticated locally in SQLite. Never claims dispatch without verified external PSAP connection.
                         </Text>
+                      </View>
+                    ) : null}
+
+                    {/* Step 8 Relay Action: Forward via BLE if Eligible */}
+                    {item.relayStatus === 'eligible' ? (
+                      <View style={[styles.actionRow, { marginBottom: spacing.xs }]}>
+                        <PrimaryButton
+                          title={forwardingRelayId === (item.alertId || item.id) ? 'Broadcasting...' : '📡 Forward via BLE Relay'}
+                          onPress={() => handleForwardRelayFromHistory(item)}
+                          variant="warning"
+                          icon="📡"
+                          loading={forwardingRelayId === (item.alertId || item.id)}
+                          disabled={forwardingRelayId === (item.alertId || item.id)}
+                          style={styles.resolveButton}
+                        />
                       </View>
                     ) : null}
 
@@ -918,6 +1030,51 @@ const styles = StyleSheet.create({
   },
   tagPendingSyncText: {
     color: colors.warningDark,
+  },
+  tagRelayed: {
+    backgroundColor: '#EDE9FE',
+    borderColor: '#C4B5FD',
+  },
+  tagDirect: {
+    backgroundColor: colors.surfaceSubtle,
+    borderColor: colors.border,
+  },
+  tagForwarded: {
+    backgroundColor: colors.successLight,
+    borderColor: colors.successBorder,
+  },
+  tagEligible: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  relayBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  relayBannerIconCol: {
+    marginRight: spacing.sm,
+  },
+  relayBannerIcon: {
+    fontSize: 20,
+  },
+  relayBannerContent: {
+    flex: 1,
+  },
+  relayBannerTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  relayBannerStats: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
   },
   cardBody: {
     marginTop: spacing.xs,

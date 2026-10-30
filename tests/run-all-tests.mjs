@@ -1,12 +1,13 @@
 /**
- * RescueLink — Comprehensive Automated Test Suite (Step 7)
+ * RescueLink — Comprehensive Automated Test Suite (Step 8)
  *
- * Verifies all 5 core subsystem modules:
+ * Verifies all 6 core subsystem modules:
  * 1. Authentication & Security (Registration, bcrypt hashing, JWT validation, ownership)
  * 2. Emergency Alert REST APIs & Validation (Categories, coordinate bounds, authorization)
  * 3. BLE Protocol & Serialization [Hardware Mocked] (MTU bounds, credential scrubbing, deduplication)
- * 4. SQLite Offline Persistence & Migrations (Versioned migrations, WAL, multi-source persistence, atomic ACK)
+ * 4. SQLite Offline Persistence & Migrations (Versioned migrations v1-v3, WAL, multi-source persistence, atomic ACK)
  * 5. Offline Outbox & Cloud Synchronization (Idempotency, exponential backoff, relay attribution, 401 handling)
+ * 6. Multi-Device SOS Relay Network (Epidemic routing, hop count, integrity hash, TTL, loop prevention, rate limits)
  */
 
 import { DatabaseSync } from 'node:sqlite';
@@ -21,12 +22,18 @@ import { setCustomDatabase, resetDatabaseInstance } from '../mobile/src/database
 import { AlertRepository } from '../mobile/src/database/alertRepository.js';
 import { ReceiptRepository } from '../mobile/src/database/receiptRepository.js';
 import { SyncQueueRepository } from '../mobile/src/database/syncQueueRepository.js';
+import { RelayRepository } from '../mobile/src/database/relayRepository.js';
+import { relayService } from '../mobile/src/services/relay/relayService.js';
+import { relaySettings } from '../mobile/src/services/relay/relaySettings.js';
 import { syncService } from '../mobile/src/services/sync/syncService.js';
 import { networkService } from '../mobile/src/services/network/networkService.js';
 import { apiClient } from '../mobile/src/services/api/apiClient.js';
 import {
   buildSOSAlertPayload,
   buildSOSAcknowledgePayload,
+  buildRelayForwardPayload,
+  computeAlertIntegrityHash,
+  verifyAlertIntegrity,
   serializeBLEMessage,
   deserializeBLEMessage,
   sanitizeBLEPayload,
@@ -109,7 +116,7 @@ function stopEphemeralServer() {
 
 async function runComprehensiveTestSuite() {
   console.log('================================================================');
-  console.log('   RESCUELINK STEP 7 COMPREHENSIVE AUTOMATED TEST SUITE');
+  console.log('   RESCUELINK STEP 8 COMPREHENSIVE AUTOMATED TEST SUITE');
   console.log('================================================================\n');
 
   let totalPassed = 0;
@@ -466,7 +473,7 @@ async function runComprehensiveTestSuite() {
     const mockDb = createInMemoryExpoSqliteWrapper();
     setCustomDatabase(mockDb);
 
-    await runTest('SQLite: Migrations v1 and v2 apply idempotently and create all tables and indexes', async () => {
+    await runTest('SQLite: Migrations v1, v2, and v3 apply idempotently and create all tables and indexes', async () => {
       await runMigrations(mockDb);
 
       const tables = await mockDb.getAllAsync("SELECT name FROM sqlite_master WHERE type='table';");
@@ -474,6 +481,7 @@ async function runComprehensiveTestSuite() {
       assert.ok(tableNames.includes('alerts'), 'Must create alerts table');
       assert.ok(tableNames.includes('message_receipts'), 'Must create message_receipts table');
       assert.ok(tableNames.includes('sync_queue'), 'Must create sync_queue table');
+      assert.ok(tableNames.includes('relay_history'), 'Must create relay_history table');
       assert.ok(tableNames.includes('schema_migrations'), 'Must create schema_migrations table');
     });
 
@@ -723,6 +731,343 @@ async function runComprehensiveTestSuite() {
 
       apiClient.syncAlerts = origSync;
     });
+
+    // =========================================================================
+    // MODULE 6: MULTI-DEVICE SOS RELAY NETWORK (STEP 8)
+    // =========================================================================
+    console.log('\n--- Module 6: Multi-Device SOS Relay Network ---');
+
+    await runTest('Relay Protocol: Serializes valid relay SOS_ALERT with hop count, integrity hash, and under 512 MTU', () => {
+      const payload = buildSOSAlertPayload({
+        alertId: 'relay-alert-001',
+        emergencyType: 'Medical Emergency',
+        details: 'Hiker with broken leg at mile marker 4',
+        senderName: 'Alice Origin',
+        latitude: 13.0827,
+        longitude: 80.2707,
+        hopCount: 0,
+        maxHops: 3,
+        originalSenderId: 'user-alice-01',
+      });
+
+      assert.strictEqual(payload.version, 2);
+      assert.strictEqual(payload.hopCount, 0);
+      assert.strictEqual(payload.maxHops, 3);
+      assert.strictEqual(payload.originalSenderId, 'user-alice-01');
+      assert.ok(payload.integrityHash, 'Must generate deterministic integrity hash');
+      assert.ok(payload.expiresAt, 'Must compute expiration timestamp');
+
+      const integrity = verifyAlertIntegrity(payload);
+      assert.strictEqual(integrity.valid, true);
+
+      const serialized = serializeBLEMessage(payload);
+      const byteLength = Buffer.from(serialized, 'base64').length;
+      assert.ok(byteLength <= 512, `Byte length (${byteLength}) must stay under 512 MTU`);
+
+      const deserialized = deserializeBLEMessage(serialized);
+      assert.strictEqual(deserialized.valid, true);
+      assert.strictEqual(deserialized.message.alertId, 'relay-alert-001');
+      assert.strictEqual(deserialized.message.hopCount, 0);
+      assert.strictEqual(deserialized.message.maxHops, 3);
+      assert.strictEqual(deserialized.message.integrityHash, payload.integrityHash);
+    });
+
+    await runTest('Relay Protocol: Integrity verification detects modified distress details or coordinates', () => {
+      const origPayload = buildSOSAlertPayload({
+        alertId: 'relay-alert-tamper',
+        emergencyType: 'Fire',
+        details: 'Cabin smoke detected',
+        latitude: 12.9716,
+        longitude: 77.5946,
+      });
+
+      // Tamper with details while keeping original hash
+      const tamperedDetails = { ...origPayload, details: 'Tampered fake emergency' };
+      const tamperCheck1 = verifyAlertIntegrity(tamperedDetails);
+      assert.strictEqual(tamperCheck1.valid, false);
+      assert.ok(tamperCheck1.error.includes('Integrity hash mismatch'));
+
+      // Tamper with coordinates
+      const tamperedCoords = { ...origPayload, latitude: 45.1234 };
+      const tamperCheck2 = verifyAlertIntegrity(tamperedCoords);
+      assert.strictEqual(tamperCheck2.valid, false);
+
+      // Building forwarded payload preserves original integrity hash without tampering
+      const forwarded = buildRelayForwardPayload(origPayload, 'node-relay-b');
+      assert.strictEqual(forwarded.hopCount, 1);
+      assert.strictEqual(forwarded.forwarderId, 'node-relay-b');
+      assert.strictEqual(forwarded.integrityHash, origPayload.integrityHash);
+
+      const forwardIntegrity = verifyAlertIntegrity(forwarded);
+      assert.strictEqual(forwardIntegrity.valid, true, 'Forwarded message retains valid integrity hash');
+    });
+
+    await runTest('Relay Admission: Rejects expired alerts (past TTL) and records DROPPED event in SQLite', async () => {
+      const expiredPayload = buildSOSAlertPayload({
+        alertId: 'relay-alert-expired',
+        emergencyType: 'Other',
+        details: 'Old distress from yesterday',
+        expiresAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
+      });
+
+      const res = await relayService.processIncomingRelayAlert(expiredPayload, 'device-peer-01');
+      assert.strictEqual(res.accepted, false);
+      assert.strictEqual(res.reason, 'EXPIRED');
+
+      const history = await RelayRepository.getRelayHistory({ alertId: 'relay-alert-expired' });
+      assert.strictEqual(history.length, 1);
+      assert.strictEqual(history[0].action, 'DROPPED');
+      assert.strictEqual(history[0].statusReason, 'EXPIRED');
+    });
+
+    await runTest('Relay Admission: Deduplicates repeated alerts and prevents double-forwarding', async () => {
+      const alertId = 'relay-alert-dup-01';
+      const payload = buildSOSAlertPayload({
+        alertId,
+        emergencyType: 'Personal Safety',
+        details: 'Need assistance on trail',
+        hopCount: 0,
+        maxHops: 3,
+      });
+
+      // First receipt: admitted and eligible
+      const res1 = await relayService.processIncomingRelayAlert(payload, 'device-peer-01');
+      assert.strictEqual(res1.accepted, true);
+      assert.strictEqual(res1.isDuplicate, false);
+      assert.strictEqual(res1.eligibleToForward, true);
+
+      // Second receipt of same alert: detected as duplicate
+      const res2 = await relayService.processIncomingRelayAlert(payload, 'device-peer-02');
+      assert.strictEqual(res2.accepted, true);
+      assert.strictEqual(res2.isDuplicate, true);
+      assert.strictEqual(res2.eligibleToForward, false);
+      assert.strictEqual(res2.reason, 'DUPLICATE_ALERT');
+
+      // Database alert count remains 1
+      const dbAlert = await AlertRepository.getAlertById(alertId);
+      assert.ok(dbAlert);
+    });
+
+    await runTest('Relay Admission: Enforces maximum hop count (hopCount >= maxHops) and suppresses forward', async () => {
+      const maxHopsAlertId = 'relay-alert-max-hops';
+      const atMaxHopsPayload = buildSOSAlertPayload({
+        alertId: maxHopsAlertId,
+        emergencyType: 'Accident',
+        details: 'Multi-car pileup',
+        hopCount: 3,
+        maxHops: 3,
+      });
+
+      const res = await relayService.processIncomingRelayAlert(atMaxHopsPayload, 'device-peer-03');
+      assert.strictEqual(res.accepted, true);
+      assert.strictEqual(res.eligibleToForward, false);
+      assert.strictEqual(res.reason, 'HOP_LIMIT_REACHED');
+
+      // Stored locally in SQLite with relayStatus = 'dropped_hop_limit'
+      const stored = await AlertRepository.getAlertById(maxHopsAlertId);
+      assert.strictEqual(stored.relayStatus, 'dropped_hop_limit');
+
+      // Attempt to forward directly should fail
+      const fwdRes = await relayService.forwardAlert(stored);
+      assert.strictEqual(fwdRes.success, false);
+      assert.strictEqual(fwdRes.reason, 'HOP_LIMIT_REACHED');
+    });
+
+    await runTest('Relay Admission: Prevents relay loops from own node or previous forwarder', async () => {
+      const myNodeId = relaySettings.getNodeId();
+      const loopAlertId = 'relay-alert-loop-01';
+
+      // 1. Alert that originated from own user ID
+      const ownOriginPayload = buildSOSAlertPayload({
+        alertId: loopAlertId,
+        emergencyType: 'Medical Emergency',
+        originalSenderId: 'my-test-user-id',
+      });
+
+      const res1 = await relayService.processIncomingRelayAlert(ownOriginPayload, 'device-peer-04', 'my-test-user-id');
+      assert.strictEqual(res1.accepted, false);
+      assert.strictEqual(res1.reason, 'LOOP_DETECTED');
+
+      // 2. Alert where forwarderId matches our own nodeId
+      const previousForwarderPayload = buildSOSAlertPayload({
+        alertId: 'relay-alert-loop-02',
+        emergencyType: 'Fire',
+        forwarderId: myNodeId,
+      });
+
+      const res2 = await relayService.processIncomingRelayAlert(previousForwarderPayload, 'device-peer-05');
+      assert.strictEqual(res2.accepted, false);
+      assert.strictEqual(res2.reason, 'LOOP_DETECTED');
+    });
+
+    await runTest('Relay Admission: Relay disabled setting saves locally for personal triage & cloud sync but drops forward', async () => {
+      await relaySettings.setRelayEnabled(false);
+      const disabledAlertId = 'relay-alert-disabled-test';
+
+      const payload = buildSOSAlertPayload({
+        alertId: disabledAlertId,
+        emergencyType: 'Other',
+        details: 'Alert received while relay disabled',
+        hopCount: 1,
+        maxHops: 3,
+      });
+
+      const res = await relayService.processIncomingRelayAlert(payload, 'device-peer-06');
+      assert.strictEqual(res.accepted, true);
+      assert.strictEqual(res.eligibleToForward, false);
+      assert.strictEqual(res.reason, 'RELAY_DISABLED');
+
+      // Saved locally in SQLite
+      const stored = await AlertRepository.getAlertById(disabledAlertId);
+      assert.ok(stored);
+      assert.strictEqual(stored.relayStatus, 'dropped_disabled');
+
+      // Enqueued in sync queue for cloud sync
+      const queued = await mockDb.getFirstAsync('SELECT * FROM sync_queue WHERE alertId = ?;', [disabledAlertId]);
+      assert.ok(queued, 'Must enqueue in sync_queue even when relay forwarding is disabled');
+
+      // Reset relay setting to true
+      await relaySettings.setRelayEnabled(true);
+    });
+
+    await runTest('Relay Engine: Rate limiting throttles rapid sequential forward broadcasts', async () => {
+      // Configure temporary tight rate limit: 2 forwards per minute
+      relaySettings.setRateLimitConfig({ maxForwards: 2, windowMs: 60000 });
+
+      const alert1 = await AlertRepository.saveOrUpdateAlert({
+        alertId: 'rate-alert-01',
+        emergencyType: 'Medical Emergency',
+        source: 'bluetooth',
+        deliveryStatus: 'received',
+        relayStatus: 'eligible',
+        hopCount: 0,
+        maxHops: 3,
+      });
+
+      const alert2 = await AlertRepository.saveOrUpdateAlert({
+        alertId: 'rate-alert-02',
+        emergencyType: 'Accident',
+        source: 'bluetooth',
+        deliveryStatus: 'received',
+        relayStatus: 'eligible',
+        hopCount: 0,
+        maxHops: 3,
+      });
+
+      const alert3 = await AlertRepository.saveOrUpdateAlert({
+        alertId: 'rate-alert-03',
+        emergencyType: 'Fire',
+        source: 'bluetooth',
+        deliveryStatus: 'received',
+        relayStatus: 'eligible',
+        hopCount: 0,
+        maxHops: 3,
+      });
+
+      const fwd1 = await relayService.forwardAlert(alert1.alert);
+      assert.strictEqual(fwd1.success, true);
+
+      const fwd2 = await relayService.forwardAlert(alert2.alert);
+      assert.strictEqual(fwd2.success, true);
+
+      // Third forward within rate limit window must be throttled
+      const fwd3 = await relayService.forwardAlert(alert3.alert);
+      assert.strictEqual(fwd3.success, false);
+      assert.strictEqual(fwd3.reason, 'RATE_LIMIT_EXCEEDED');
+
+      // Reset rate limit to standard default
+      relaySettings.setRateLimitConfig({ maxForwards: 5, windowMs: 60000 });
+    });
+
+    await runTest('Relay Storage: SQLite Migration v3 persists relay_history and reports accurate aggregate stats', async () => {
+      const stats = await RelayRepository.getRelayStats();
+      assert.ok(stats.totalReceived >= 1, 'Must count received events');
+      assert.ok(stats.totalForwarded >= 2, 'Must count forwarded events');
+      assert.ok(stats.totalDropped >= 1, 'Must count dropped events');
+
+      const forwardedCount = await RelayRepository.getForwardedCount();
+      assert.ok(forwardedCount >= 2);
+
+      // Check migration table record
+      const migrationV3 = await mockDb.getFirstAsync('SELECT * FROM schema_migrations WHERE version = 3;');
+      assert.ok(migrationV3, 'Migration v3 must be recorded in schema_migrations');
+    });
+
+    await runTest('Relay End-to-End: Three-Device Multi-Hop Simulation (A -> B -> C) synchronizes to Cloud backend', async () => {
+      const meshAlertId = `mesh-sim-${Date.now()}`;
+
+      // Device A (Originator) creates SOS distress beacon
+      const deviceAPayload = buildSOSAlertPayload({
+        alertId: meshAlertId,
+        emergencyType: 'Medical Emergency',
+        details: 'Isolated hiker injured on ridge',
+        senderName: 'Alice Survivor',
+        latitude: 12.9200,
+        longitude: 80.1200,
+        originalSenderId: 'device-a-alice',
+        hopCount: 0,
+        maxHops: 3,
+      });
+
+      // Device B receives from Device A over BLE
+      const deviceBNodeId = 'node-device-b';
+      const deviceBReceived = await relayService.processIncomingRelayAlert(deviceAPayload, 'device-a-ble');
+      assert.strictEqual(deviceBReceived.accepted, true);
+      assert.strictEqual(deviceBReceived.eligibleToForward, true);
+
+      // Device B forwards the alert to Device C
+      const deviceBForwardPayload = buildRelayForwardPayload(deviceBReceived.alert, deviceBNodeId);
+      assert.strictEqual(deviceBForwardPayload.hopCount, 1);
+      assert.strictEqual(deviceBForwardPayload.forwarderId, deviceBNodeId);
+      assert.strictEqual(deviceBForwardPayload.alertId, meshAlertId);
+      assert.strictEqual(deviceBForwardPayload.integrityHash, deviceAPayload.integrityHash);
+
+      // Device C (with internet connection) receives from Device B
+      const deviceCReceived = deserializeBLEMessage(serializeBLEMessage(deviceBForwardPayload));
+      assert.strictEqual(deviceCReceived.valid, true);
+      assert.strictEqual(deviceCReceived.message.hopCount, 1);
+
+      // Device C synchronizes the multi-hop alert to the backend server via POST /api/alerts/sync
+      const syncRes = await fetch(`${testServerBaseUrl}/alerts/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          alerts: [
+            {
+              alertId: meshAlertId,
+              emergencyType: deviceCReceived.message.emergencyType,
+              details: deviceCReceived.message.details,
+              location: {
+                latitude: deviceCReceived.message.latitude,
+                longitude: deviceCReceived.message.longitude,
+              },
+              source: 'bluetooth_relay',
+              originalSenderName: deviceCReceived.message.senderName,
+              hopCount: deviceCReceived.message.hopCount,
+              forwarderId: deviceCReceived.message.forwarderId,
+              originalSenderId: deviceCReceived.message.originalSenderId,
+              createdAt: deviceCReceived.message.createdAt,
+            },
+          ],
+        }),
+      });
+
+      assert.strictEqual(syncRes.status, 200);
+      const syncData = await syncRes.json();
+      assert.strictEqual(syncData.summary.synced, 1);
+
+      // Backend records alert preserving Alice's sender name, hopCount 1, and relayedBy attribution
+      const backendAlert = await alertStore.findById(meshAlertId);
+      assert.ok(backendAlert, 'Backend must contain the synchronized mesh alert');
+      assert.strictEqual(backendAlert.source, 'bluetooth_relay');
+      assert.strictEqual(backendAlert.senderName, 'Alice Survivor');
+      assert.strictEqual(backendAlert.hopCount, 1);
+      assert.strictEqual(backendAlert.forwarderId, deviceBNodeId);
+      assert.strictEqual(backendAlert.relayedBy, testUserId);
+    });
   } finally {
     // Teardown and reset test databases and stores
     await stopEphemeralServer();
@@ -736,7 +1081,7 @@ async function runComprehensiveTestSuite() {
   console.log('================================================================\n');
 
   if (totalPassed === totalTests) {
-    console.log('✅ ALL STEP 7 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
+    console.log('✅ ALL STEP 8 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
     process.exit(0);
   } else {
     console.error(`❌ ${totalTests - totalPassed} TEST(S) FAILED.\n`);

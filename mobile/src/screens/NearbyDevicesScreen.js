@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
 import { AlertRepository, ReceiptRepository, SyncQueueRepository } from '../database';
+import { relayService } from '../services/relay/relayService';
+import { useAuth } from '../context/AuthContext';
 import { StatusCard } from '../components/StatusCard';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -31,6 +33,8 @@ import { formatCoordinates, formatTimestamp } from '../utils/helpers';
  * 7. Disconnecting and clean teardown on unmount.
  */
 export const NearbyDevicesScreen = ({ navigation }) => {
+  const { user } = useAuth();
+
   // BLE Hardware State
   const [hardwareStatus, setHardwareStatus] = useState('Checking BLE interface...');
   const [hardwareVariant, setHardwareVariant] = useState('info');
@@ -51,6 +55,10 @@ export const NearbyDevicesScreen = ({ navigation }) => {
   const [ackStatus, setAckStatus] = useState('none'); // 'none' | 'sending' | 'acknowledged' | 'failed'
   const [ackData, setAckData] = useState(null);
   const [isAcknowledging, setIsAcknowledging] = useState(false);
+
+  // Step 8: Multi-Device Relay State
+  const [isForwardingRelay, setIsForwardingRelay] = useState(false);
+  const [relayForwardStatus, setRelayForwardStatus] = useState(null);
 
   // References for unmount cleanup
   const activeDeviceRef = useRef(null);
@@ -169,55 +177,38 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       const result = await bluetoothService.connectAndReceiveAlert(
         device.id,
         async (alert) => {
-          // Persist incoming BLE distress alert to SQLite
+          // Process alert through Relay Service admission & deduplication pipeline
           try {
-            const saveRes = await AlertRepository.saveOrUpdateAlert({
-              alertId: alert.alertId,
-              senderName: alert.senderName,
-              emergencyType: alert.emergencyType,
-              details: alert.details,
-              latitude: alert.latitude,
-              longitude: alert.longitude,
-              source: 'bluetooth',
-              deliveryStatus: 'received',
-              ackStatus: 'unacknowledged',
-              syncStatus: 'pending_sync',
-              createdAt: alert.createdAt,
-            });
+            const relayResult = await relayService.processIncomingRelayAlert(
+              alert,
+              device.id,
+              user?.id
+            );
 
-            if (!saveRes.isNew) {
-              alert.isDuplicate = true;
-            }
-
-            // Enqueue into offline outbox for cloud relay when connectivity is available
-            try {
-              await SyncQueueRepository.enqueue({
-                alertId: alert.alertId,
-                operation: 'CREATE',
-                payload: {
-                  alertId: alert.alertId,
-                  emergencyType: alert.emergencyType,
-                  details: alert.details,
-                  latitude: alert.latitude,
-                  longitude: alert.longitude,
-                  source: 'bluetooth',
-                  originalSenderName: alert.senderName,
-                  createdAt: alert.createdAt,
-                },
+            if (relayResult.alert) {
+              setReceivedAlert({
+                ...alert,
+                ...relayResult.alert,
+                isDuplicate: relayResult.isDuplicate || false,
+                eligibleToForward: relayResult.eligibleToForward,
+                relayReason: relayResult.reason,
               });
-            } catch (qErr) {
-              console.warn('[NearbyDevicesScreen] SQLite queue relay warning:', qErr.message);
+            } else {
+              setReceivedAlert({
+                ...alert,
+                eligibleToForward: false,
+                relayReason: relayResult.reason || 'Rejected by mesh relay policy',
+              });
             }
           } catch (dbErr) {
-            console.warn('[NearbyDevicesScreen] SQLite save alert warning:', dbErr.message);
+            console.warn('[NearbyDevicesScreen] Relay processing warning:', dbErr.message);
+            setReceivedAlert(alert);
           }
-          setReceivedAlert(alert);
         }
       );
 
       if (result.success && result.alert) {
         setConnectionState(BLE_STATES.CONNECTED);
-        setReceivedAlert(result.alert);
         setScanMessage(`Connected to ${device.name}. Distress alert received!`);
       }
     } catch (err) {
@@ -227,6 +218,47 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       Alert.alert('Connection Failed', err.message);
     } finally {
       setIsConnecting(false);
+    }
+  };
+
+  // Step 8: Forward Received SOS Beacon to Nearby Peers over BLE
+  const handleForwardViaRelay = async () => {
+    if (!receivedAlert) return;
+    setIsForwardingRelay(true);
+    setRelayForwardStatus(null);
+
+    try {
+      const res = await relayService.forwardAlert(receivedAlert);
+      if (res.success) {
+        setRelayForwardStatus({
+          success: true,
+          message: `Forwarding active! Relaying distress beacon (Hop ${res.forwardPayload.hopCount} of ${res.forwardPayload.maxHops}).`,
+        });
+        setReceivedAlert((prev) => ({
+          ...prev,
+          relayStatus: 'forwarded',
+          eligibleToForward: false,
+          hopCount: res.forwardPayload.hopCount,
+        }));
+        Alert.alert(
+          '📡 Beacon Forwarded via Mesh Relay',
+          `This emergency alert is now being re-broadcast over Bluetooth Low Energy.\n\nHop: ${res.forwardPayload.hopCount} / ${res.forwardPayload.maxHops}\nForwarder: ${res.forwardPayload.forwarderId}`
+        );
+      } else {
+        setRelayForwardStatus({
+          success: false,
+          message: res.error || 'Failed to forward alert.',
+        });
+        Alert.alert('Relay Forwarding Notice', res.error || 'Unable to forward alert.');
+      }
+    } catch (e) {
+      setRelayForwardStatus({
+        success: false,
+        message: e.message,
+      });
+      Alert.alert('Relay Error', e.message);
+    } finally {
+      setIsForwardingRelay(false);
     }
   };
 
@@ -425,6 +457,22 @@ export const NearbyDevicesScreen = ({ navigation }) => {
                 </Text>
               </View>
 
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Mesh Route:</Text>
+                <Text style={styles.detailValueBold}>
+                  {`Hop ${receivedAlert.hopCount || 0} of ${receivedAlert.maxHops || 3} ${
+                    receivedAlert.forwarderId ? `(via ${receivedAlert.forwarderId})` : '(Direct Origin)'
+                  }`}
+                </Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Integrity:</Text>
+                <Text style={styles.detailValue}>
+                  {receivedAlert.integrityHash ? '✅ Verified (Tamper-Resistant)' : 'Legacy v1 Protocol'}
+                </Text>
+              </View>
+
               {receivedAlert.details ? (
                 <View style={styles.detailsBlock}>
                   <Text style={styles.detailLabel}>Distress Details:</Text>
@@ -452,6 +500,81 @@ export const NearbyDevicesScreen = ({ navigation }) => {
                   disabled={isAcknowledging}
                 />
               )}
+            </View>
+
+            {/* Step 8: Multi-Device Mesh Relay Section */}
+            <View style={styles.relaySection}>
+              <View style={styles.relayHeaderRow}>
+                <Text style={styles.relaySectionTitle}>📡 Mesh Relay Network</Text>
+                <View
+                  style={[
+                    styles.relayBadge,
+                    receivedAlert.relayStatus === 'forwarded'
+                      ? styles.relayBadgeForwarded
+                      : receivedAlert.eligibleToForward
+                      ? styles.relayBadgeEligible
+                      : styles.relayBadgeStored,
+                  ]}
+                >
+                  <Text style={styles.relayBadgeText}>
+                    {receivedAlert.relayStatus === 'forwarded'
+                      ? 'FORWARDED'
+                      : receivedAlert.eligibleToForward
+                      ? 'ELIGIBLE TO FORWARD'
+                      : 'STORED ONLY'}
+                  </Text>
+                </View>
+              </View>
+
+              {receivedAlert.relayStatus === 'forwarded' ? (
+                <View style={styles.relayActiveCard}>
+                  <Text style={styles.relayActiveTitle}>📡 Active Mesh Relay</Text>
+                  <Text style={styles.relayActiveText}>
+                    This device is actively forwarding this distress beacon as Hop{' '}
+                    {(receivedAlert.hopCount || 0) + 1}. Nearby nodes can now discover and assist.
+                  </Text>
+                </View>
+              ) : receivedAlert.eligibleToForward ? (
+                <View style={styles.relayActionCard}>
+                  <Text style={styles.relayActionDesc}>
+                    Help expand rescue coverage. Forward this SOS beacon over Bluetooth Low Energy to reach responders further away.
+                  </Text>
+                  <PrimaryButton
+                    title={
+                      isForwardingRelay
+                        ? 'Broadcasting Relay...'
+                        : `Forward via BLE Relay (Hop ${(receivedAlert.hopCount || 0) + 1})`
+                    }
+                    onPress={handleForwardViaRelay}
+                    variant="warning"
+                    icon="📡"
+                    disabled={isForwardingRelay}
+                  />
+                </View>
+              ) : (
+                <View style={styles.relayNoteCard}>
+                  <Text style={styles.relayNoteText}>
+                    {receivedAlert.relayReason === 'HOP_LIMIT_REACHED'
+                      ? `Hop limit reached (${receivedAlert.hopCount}/${receivedAlert.maxHops}). Alert is preserved in SQLite and queued for cloud sync.`
+                      : receivedAlert.relayReason === 'RELAY_DISABLED'
+                      ? 'Mesh relay forwarding is currently disabled in your Profile Settings.'
+                      : 'Alert is safely stored in local SQLite database for cloud sync.'}
+                  </Text>
+                </View>
+              )}
+
+              {relayForwardStatus ? (
+                <View
+                  style={[
+                    styles.statusNotice,
+                    relayForwardStatus.success
+                      ? styles.statusNoticeSuccess
+                      : styles.statusNoticeWarning,
+                  ]}
+                >
+                  <Text style={styles.statusNoticeText}>{relayForwardStatus.message}</Text>
+                </View>
+              ) : null}
             </View>
 
             {/* Alert Actions: Disconnect / Clear */}
@@ -844,6 +967,102 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: colors.primary,
+  },
+  relaySection: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  relayHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  relaySectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  relayBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+  },
+  relayBadgeForwarded: {
+    backgroundColor: colors.successLight,
+  },
+  relayBadgeEligible: {
+    backgroundColor: '#FEF3C7',
+  },
+  relayBadgeStored: {
+    backgroundColor: colors.surface,
+  },
+  relayBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  relayActiveCard: {
+    backgroundColor: colors.successLight,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginTop: 4,
+  },
+  relayActiveTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.successDark,
+  },
+  relayActiveText: {
+    fontSize: 11,
+    color: colors.successDark,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  relayActionCard: {
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginTop: 4,
+  },
+  relayActionDesc: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+    lineHeight: 16,
+  },
+  relayNoteCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginTop: 4,
+  },
+  relayNoteText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    lineHeight: 15,
+  },
+  statusNotice: {
+    marginTop: spacing.xs,
+    padding: spacing.xs,
+    borderRadius: borderRadius.sm,
+  },
+  statusNoticeSuccess: {
+    backgroundColor: colors.successLight,
+  },
+  statusNoticeWarning: {
+    backgroundColor: '#FEF3C7',
+  },
+  statusNoticeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
   footerAction: {
     marginTop: spacing.xl,

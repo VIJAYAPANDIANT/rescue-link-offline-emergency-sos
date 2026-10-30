@@ -6,7 +6,7 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–7 Completed: Production-Ready Prototype)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–8 Completed: Multi-Device SOS Relay Network)**
 
 ---
 
@@ -14,7 +14,7 @@
 
 **RescueLink** is a mission-critical, offline-first mobile emergency distress response system. During major natural disasters (earthquakes, cyclones, floods), wilderness expeditions, or catastrophic power grid collapse, cellular infrastructure and commercial internet services often fail entirely.
 
-RescueLink bridges this communication gap through a **device-to-device Bluetooth Low Energy (BLE) direct signaling architecture** combined with **local SQLite offline persistence**. Smartphones running RescueLink can compose distress beacons offline, store them in a durable local SQLite ledger, broadcast beacons directly to nearby peers over custom BLE GATT profiles, and transmit genuine acknowledgments between sender and receiver devices without cellular connectivity.
+RescueLink bridges this communication gap through a **multi-device Bluetooth Low Energy (BLE) epidemic relay network** combined with **local SQLite offline persistence**. When a survivor with no cellular signal broadcasts an SOS, nearby devices automatically receive, store, and can forward the distress alert across multiple hops. Once any participating node in the mesh regains cellular or Wi-Fi connectivity, all collected emergency records are opportunistically synchronized with the central rescue cloud backend.
 
 ---
 
@@ -22,7 +22,7 @@ RescueLink bridges this communication gap through a **device-to-device Bluetooth
 
 > [!IMPORTANT]
 > **RescueLink is an academic engineering project.**
-> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, and durable offline SQLite storage, it is **NOT certified by government public safety answering points (PSAPs)**.
+> - While RescueLink implements real Bluetooth Low Energy peer transmission, genuine GATT message exchange, multi-hop relay forwarding, and durable offline SQLite storage, it is **NOT certified by government public safety answering points (PSAPs)**.
 > - This software is **NOT a replacement for certified 911, 112, or local emergency dispatch hotlines**.
 > - In an active emergency where cellular networks or landlines are available, always contact official emergency services immediately.
 
@@ -41,9 +41,10 @@ RescueLink bridges this communication gap through a **device-to-device Bluetooth
 | **Local Storage** | `expo-sqlite` (v15.1.4) | Offline WAL persistence, schema migrations, receipts & outbox | ✅ Completed (Step 5) |
 | **Connectivity & NetInfo** | `@react-native-community/netinfo` (v11.4.1) | Live network monitoring & internet reachability verification | ✅ Completed (Step 6) |
 | **Cloud Synchronization** | Opportunistic Sync Engine + Express REST | Outbox batch processing, exponential backoff, & BLE relay attribution | ✅ Completed (Step 6) |
+| **System Integration** | End-to-End Relay + Security Audit + 35 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
+| **Multi-Device SOS Relay** | Controlled BLE Epidemic Mesh Forwarding | Multi-hop routing (A -> B -> C), hop limits, tamper hash, TTL & rate limits | ✅ Completed (Step 8) |
 | **Location & Maps** | GPS + Google Maps API | Real-time coordinate lock & spatial visualization | ✅ Completed (Step 1, optional) |
-| **System Integration** | End-to-End Relay + Security Audit + 25 Tests | Full mesh-to-cloud relay, dynamic gateway config & test suite | ✅ Completed (Step 7) |
-| **Multi-hop Mesh Swarm** | Mesh Gossip Protocol + Live GIS Map | Multi-hop flood routing across 3+ peers & incident map | ⏳ Planned (Next Phase) |
+| **Cryptographic E2EE** | Curve25519 / X25519 Asymmetric Encryption | End-to-end encryption of sensitive characteristic details | ⏳ Planned (Next Phase) |
 
 ---
 
@@ -63,41 +64,43 @@ c:\Offline Emergency SOS/
 │       │   ├── SOSButton.js           # Animated pulsing circular emergency trigger
 │       │   ├── StatusCard.js          # Color-coded subsystem status card
 │       │   ├── EmergencyTypeSelector.js # Category picker (Medical, Fire, Accident, etc.)
-│       │   ├── PrimaryButton.js       # Accessible buttons (Danger, Outline, Success)
+│       │   ├── PrimaryButton.js       # Accessible buttons (Danger, Outline, Success, Warning)
 │       │   ├── EmptyState.js          # Zero-data state with actions
 │       │   └── index.js
 │       ├── screens/                   # Core application screens
 │       │   ├── HomeScreen.js          # Emergency dashboard with live subsystem sensors
 │       │   ├── SendSOSScreen.js       # SOS composer, offline draft, & BLE broadcaster
-│       │   ├── NearbyDevicesScreen.js # BLE receiver scanner, SOS reader, & ACK sender
-│       │   ├── EmergencyHistoryScreen.js # SQLite-backed persistent emergency ledger
+│       │   ├── NearbyDevicesScreen.js # BLE receiver, SOS reader, ACK sender, & relay forwarder
+│       │   ├── EmergencyHistoryScreen.js # SQLite-backed persistent ledger & mesh relay hub
 │       │   ├── LoginScreen.js         # Responder JWT authentication
 │       │   ├── RegisterScreen.js      # Account registration screen
-│       │   ├── ProfileScreen.js       # Responder credentials & session management
+│       │   ├── ProfileScreen.js       # Mesh relay settings, anonymous Node ID & gateway config
 │       │   └── index.js
 │       ├── navigation/                # Mobile navigation system
 │       │   ├── AppNavigator.js        # Fluid screen router & emergency bottom tabs
 │       │   └── index.js
 │       ├── context/
 │       │   └── AuthContext.js         # JWT auth state provider & AsyncStorage sync
-│       ├── database/                  # SQLite Persistence Subsystem (Step 5 & 6)
+│       ├── database/                  # SQLite Persistence Subsystem (Steps 5, 6 & 8)
 │       │   ├── database.js            # SQLite connection, PRAGMA WAL, & lifecycle
-│       │   ├── migrations.js          # Versioned schema migrations runner (v1 & v2)
+│       │   ├── migrations.js          # Versioned schema migrations runner (v1, v2 & v3)
 │       │   ├── alertRepository.js     # SOS alert CRUD, upsert, and multi-source queries
 │       │   ├── receiptRepository.js   # Message delivery & ACK receipts with atomic transactions
 │       │   ├── syncQueueRepository.js # Offline outbox queue with deduplication & retry backoff
+│       │   ├── relayRepository.js     # Step 8 Relay history audit log & aggregate stats
 │       │   └── index.js               # Central database export
 │       ├── services/                  # Business & hardware services
 │       │   ├── bluetooth/             # Bluetooth Low Energy Subsystem (Step 4)
-│       │   │   ├── bleConstants.js    # Custom 128-bit UUIDs, protocol limits, states
-│       │   │   ├── bleProtocol.js     # Version 1 JSON message serializer & sanitization
+│       │   │   ├── bleConstants.js    # Custom 128-bit UUIDs, protocol limits, relay parameters
+│       │   │   ├── bleProtocol.js     # Version 2 protocol serializer, tamper hash, & forward builder
 │       │   │   ├── blePermissions.js  # Android 6–14+ dynamic runtime permissions
 │       │   │   ├── bleManagerModule.js# Safe native BLE bridge resolver
 │       │   │   ├── bleCentralService.js# Receiver scanning, connect, read, ACK write
 │       │   │   ├── blePeripheralService.js# Sender GATT server & advertising beacon
 │       │   │   └── bluetoothService.js# Unified Central & Peripheral coordinator
-│       │   ├── location/
-│       │   │   └── locationService.js # GPS coordinate provider & fallback
+│       │   ├── relay/                 # Multi-Device Mesh Relay Subsystem (Step 8)
+│       │   │   ├── relaySettings.js   # Relay enable toggle, max hops, anonymous node ID
+│       │   │   └── relayService.js    # Multi-hop admission pipeline, loop prevention & forward engine
 │       │   ├── network/               # Network Connectivity Subsystem (Step 6)
 │       │   │   └── networkService.js  # Live NetInfo monitor & reachability checker
 │       │   ├── api/
@@ -128,19 +131,330 @@ c:\Offline Emergency SOS/
 │   │   ├── alert.routes.js            # /api/alerts routes
 │   │   └── index.js                   # Central route aggregator
 │   ├── services/
-│   │   └── storage.service.js         # Atomic mutex file write utility
+│   │   ├── storage.service.js         # Atomic mutex file write utility
+│   │   ├── alert.service.js           # Alert domain logic & sync ingestion
+│   │   └── alertStore.js              # Idempotent storage with relay metadata
 │   ├── .env                           # Local environment configuration
 │   ├── .env.example                   # Environment variable template
 │   ├── package.json                   # Server dependencies & scripts
 │   └── server.js                      # Express application entry point
 ├── tests/
-│   ├── run-all-tests.mjs              # Unified 25-scenario automated test runner
+│   ├── run-all-tests.mjs              # Unified 35-scenario automated test runner
 │   └── run-step6-sync-tests.mjs       # Step 6 outbox & sync regression tests
 ├── docs/
 │   ├── architecture.md                # System design & multi-hop BLE mesh specs
 │   └── api-specs.md                   # REST API & BLE GATT protocol documentation
 ├── .gitignore
 └── README.md
+```
+
+---
+
+## 🏛️ System Architecture & Multi-Device Relay Flow
+
+```mermaid
+graph TD
+    subgraph DeviceA ["Device A: Originator (Offline)"]
+        UserA["Survivor / Initiator"] --> ComposerA["Send SOS Screen"]
+        ComposerA --> SQLiteA[("SQLite Database<br/>(hopCount = 0, source = 'local')")]
+        ComposerA --> AdvA["BLE Broadcaster / GATT Server<br/>(Protocol v2, Integrity Hash)"]
+    end
+
+    subgraph Hop1 ["Bluetooth Low Energy Hop 1 (MTU <= 512 Bytes)"]
+        AdvA -. "BLE Direct Discovery & Read<br/>(hopCount = 0, alertId = X)" .-> ScannerB["BLE Central Scanner"]
+    end
+
+    subgraph DeviceB ["Device B: Intermediate Mesh Relay (Offline)"]
+        ScannerB --> RelayEngineB["Relay Admission Engine<br/>• Integrity Check<br/>• TTL / Expiration Check<br/>• Loop Prevention<br/>• Hop Limit Check<br/>• Rate Limiter"]
+        RelayEngineB --> SQLiteB[("SQLite Database<br/>(alerts: hopCount = 0, relayStatus = 'eligible')")]
+        RelayEngineB --> HistoryB[("Relay History Ledger<br/>(action: 'RECEIVED')")]
+        RelayEngineB --> ForwarderB["Forward Alert Engine<br/>• Increment hopCount = 1<br/>• Preserve Original Content & Hash<br/>• Set forwarderId = Node-B"]
+        ForwarderB --> AdvB["BLE Broadcaster / GATT Server<br/>(Forwarded Beacon)"]
+    end
+
+    subgraph Hop2 ["Bluetooth Low Energy Hop 2 (MTU <= 512 Bytes)"]
+        AdvB -. "BLE Forwarded Discovery & Read<br/>(hopCount = 1, forwarderId = Node-B)" .-> ScannerC["BLE Central Scanner"]
+    end
+
+    subgraph DeviceC ["Device C: Terminal Relay & Ingestion Gateway (Online)"]
+        ScannerC --> RelayEngineC["Relay Admission Engine<br/>(Admitted as Hop 1)"]
+        RelayEngineC --> SQLiteC[("SQLite Database<br/>(alerts: hopCount = 1, relayStatus = 'received')")]
+        RelayEngineC --> OutboxC["Sync Queue (Outbox)<br/>(Relay Enqueued)"]
+        OutboxC --> NetCheckC{"Internet Reachable?<br/>(NetInfo + Health Ping)"}
+        NetCheckC -- Online --> CloudSync["Cloud Sync Engine<br/>(POST /api/alerts/sync)"]
+    end
+
+    subgraph CentralCloud ["RescueLink Cloud Infrastructure"]
+        CloudSync --> ExpressAPI["Express.js REST Gateway"]
+        ExpressAPI --> AuthCheck["JWT Authenticated Relay Validation"]
+        AuthCheck --> AlertStore[("Central Alert Storage<br/>• Preserves Originator Name & Details<br/>• Records Hop Count & Forwarder ID<br/>• Attributed to Relayed User ID")]
+    end
+```
+
+### State & Data Consistency Model
+RescueLink strictly maintains distinct, non-interchangeable states across storage and transmission layers:
+- **Locally Saved**: Stored securely in SQLite WAL ledger (`source: 'local'`).
+- **BLE Broadcast Active**: GATT server hosting beacon (`isAdvertising: true`).
+- **SOS Received by Peer**: Stored in receiver's SQLite with `source: 'bluetooth'` and `deliveryStatus: 'received'`.
+- **Peer Acknowledged**: Confirmed via GATT write receipt (`ackStatus: 'acknowledged'`).
+- **Relay Eligible**: Hop count < maxHops, not expired, ready for forwarding (`relayStatus: 'eligible'`).
+- **Relay Forwarded**: Device has re-broadcast beacon over BLE (`relayStatus: 'forwarded'`).
+- **Pending Cloud Sync**: Enqueued in `sync_queue` outbox (`syncStatus: 'pending_sync'`).
+- **Cloud Synced**: Upload confirmed by backend (`syncStatus: 'synced'`).
+- **Failed / Retrying**: Rescheduled via exponential backoff (`sync_queue.status: 'failed'`).
+
+> [!NOTE]
+> RescueLink **never** marks an alert as "delivered to emergency services" based solely on local storage or BLE transfer. Verified external dispatch integration is required before public safety dispatch can be asserted.
+
+---
+
+## 📡 Bluetooth Low Energy (BLE) Protocol Specification (Version 2)
+
+All RescueLink peer devices communicate directly over custom 128-bit GATT profiles:
+
+| Entity | UUID | GATT Role & Permissions | Description |
+|---|---|---|---|
+| **RescueLink Emergency Service** | `e0a90001-b5a3-f393-e0a9-e50e24dcca9e` | Primary Service | Service identification in BLE advertising beacons |
+| **SOS Alert Characteristic** | `e0a90002-b5a3-f393-e0a9-e50e24dcca9e` | `Read`, `Notify` (0x01 Read) | Sender / Forwarder hosts distress alert; Receiver reads |
+| **SOS Acknowledgment Characteristic** | `e0a90003-b5a3-f393-e0a9-e50e24dcca9e` | `Write`, `Notify` (0x10 Write with response) | Receiver Central writes confirmed ACK back to Sender |
+
+### Message Formats (Version 2 JSON)
+
+#### 1. Multi-Device Distress Alert Payload (`SOS_ALERT`)
+```json
+{
+  "version": 2,
+  "type": "SOS_ALERT",
+  "alertId": "550e8400-e29b-41d4-a716-446655440000",
+  "emergencyType": "Medical Emergency",
+  "details": "Severe allergic reaction, breathing difficulty",
+  "senderName": "Alex Rivera",
+  "latitude": 13.0827,
+  "longitude": 80.2707,
+  "createdAt": "2026-10-30T10:00:00.000Z",
+  "expiresAt": "2026-10-31T10:00:00.000Z",
+  "originalSenderId": "user-uuid-device-a",
+  "forwarderId": "node-7b8c2d",
+  "hopCount": 1,
+  "maxHops": 3,
+  "integrityHash": "4a7f9c2e"
+}
+```
+
+#### 2. Receiver Acknowledgment Payload (`SOS_ACK`)
+```json
+{
+  "version": 2,
+  "type": "SOS_ACK",
+  "alertId": "550e8400-e29b-41d4-a716-446655440000",
+  "receiverId": "node-3a8f9c",
+  "receivedAt": "2026-10-30T10:01:12.300Z"
+}
+```
+
+### Cryptographic Content Integrity Validation
+To guarantee that intermediate relay nodes **never alter** distress coordinates, emergency categories, or descriptions while forwarding:
+1. `computeAlertIntegrityHash()` calculates a deterministic 32-bit FNV-1a checksum over all immutable alert fields.
+2. When forwarding, the relay node increments `hopCount` and sets `forwarderId`, but preserves the original `integrityHash`.
+3. Every receiving node calls `verifyAlertIntegrity()`. If any party tampers with the message body, the packet is rejected with `INTEGRITY_MISMATCH`.
+
+### Relay Admission Controls & Loop Prevention
+- **Configurable Max Hop Count**: Configurable between 1 and 5 (default: 3). Packets reaching `maxHops` are stored locally for personal safety and cloud sync, but suppressed from further BLE forwarding.
+- **Message Expiration (TTL)**: Messages expire 24 hours after creation (`expiresAt`). Expired beacons are rejected.
+- **Duplicate Prevention**: If `alertId` has already been stored or processed in SQLite, duplicate forwarding is blocked.
+- **Loop Prevention**:
+  - Rejects alerts originating from own user ID or own node ID (`LOOP_DETECTED_OWN_ORIGIN`).
+  - Rejects alerts where `forwarderId` matches own node ID (`LOOP_DETECTED_PREVIOUS_FORWARDER`).
+  - Queries `relay_history` to verify this device has not already forwarded this `alertId` (`ALREADY_FORWARDED`).
+- **Relay Toggle**: Responders can enable/disable forwarding in their Profile settings. When disabled, alerts are stored locally but not re-broadcast.
+- **Sliding-Window Rate Limiting**: Caps forward broadcasts at 5 forwards per minute to protect radio resources and battery life.
+
+---
+
+## 💾 SQLite Offline Database Subsystem (Migrations v1–v3)
+
+RescueLink uses modern `expo-sqlite` (v15.1.4) with **Write-Ahead Logging (WAL)** mode as the local single source of truth.
+
+### Database Tables:
+
+1. **`alerts`**: Stores emergency distress records from all sources.
+   - `alertId`: Unique identifier (Indexed, Unique constraint).
+   - `senderId`, `senderName`, `emergencyType`, `details`, `contactDetails`, `latitude`, `longitude`.
+   - `source`: `'local'`, `'bluetooth'`, or `'server'`.
+   - `deliveryStatus`: `'pending'`, `'received'`, `'broadcasted'`, or `'Resolved'`.
+   - `ackStatus`: `'unacknowledged'` or `'acknowledged'`.
+   - `syncStatus`: `'synced'`, `'pending_sync'`, or `'not_synced'`.
+   - `hopCount`, `maxHops`, `forwarderId`, `originalSenderId`, `expiresAt`, `relayStatus`, `lastForwardedAt`, `integrityHash` (**Step 8 Migration v3**).
+   - `createdAt`, `updatedAt`.
+2. **`message_receipts`**: Audit log of delivery and acknowledgment receipts.
+   - `alertId`, `receiptType` (`'BLE_ACK_SENT'`, `'BLE_ACK_RECEIVED'`), `receivedAt`, `senderOrDeviceId`, `metadata`.
+   - Transactional link: recording a receipt atomically updates `alerts.ackStatus = 'acknowledged'`.
+3. **`sync_queue`**: Offline outbox queue for operations created while offline.
+   - `alertId`, `operation` (`'CREATE'`, `'UPDATE_STATUS'`, `'RESOLVE'`), `payload`, `status` (`'pending'`, `'processing'`, `'failed'`), `retryCount`, `lastAttemptAt`, `nextRetryAt`, `errorMessage`.
+4. **`relay_history`**: Audit trail of mesh relay activity (**Step 8 Migration v3**).
+   - `id`, `alertId`, `action` (`'RECEIVED'`, `'FORWARDED'`, `'DROPPED'`), `hopCount`, `forwarderId`, `previousHopId`, `statusReason`, `timestamp`, `metadata`.
+
+---
+
+## 📱 Mobile Screens Overview
+
+### 1. Home / Emergency Dashboard
+- **Centerpiece SOS Button**: Circular crimson trigger with breathing visual glow.
+- **System Subsystem Status Cards**:
+  - **Responder Session**: JWT Authenticated or Guest Mode.
+  - **Bluetooth Radio**: Real hardware state (BLE Ready Powered On / Disabled / Dev Build Required).
+  - **SQLite Offline Storage**: Active WAL ledger with real-time stored record counts.
+  - **Cloud Synchronization**: Real-time outbox sync status with pending queue counter and auto-sync state.
+  - **Network Connectivity**: Backend Online (HTTP 200) or Offline / Local Mode.
+  - **GPS Location Sensor**: Real-time coordinate lock status.
+- **Quick Action Portals**: Navigation to Send SOS, Nearby Devices, and Emergency History.
+
+### 2. Send SOS Screen (Sender Workflow)
+- **Category Picker**: Medical Emergency, Accident, Personal Safety, Fire, Other, and **Test / Drill**.
+- **Safe Drill Mode**: Clearly marked `Test / Drill` option allows realistic offline simulations without triggering false emergency dispatch.
+- **Optional GPS Location**: User-consented coordinate acquisition with privacy safeguards.
+- **Immediate SQLite Persistence**: Alert is saved locally in SQLite **before** any network attempt (`hopCount: 0`).
+- **Deliberate BLE Broadcast**: User taps **"Broadcast via Bluetooth"** to activate the GATT server and advertise beacons.
+- **Live Acknowledgment Listener**: When a nearby receiver confirms receipt over BLE, the screen presents a positive confirmation card and updates SQLite.
+
+### 3. Nearby Devices Screen (Receiver & Relay Forwarder Workflow)
+- **Real BLE Scanning**: Scans specifically for `RESCUELINK_SERVICE_UUID` with a 30-second timeout.
+- **Discovered Peer List**: Shows genuine discovered devices with live RSSI signal strength (no fake devices).
+- **Connect & Read SOS**: Establishes GATT connection, negotiates MTU 512, reads `SOS_ALERT_CHAR_UUID`, and routes through the relay admission pipeline.
+- **Mesh Route & Integrity Display**: Shows current hop count (`Hop X of Y`), previous forwarder ID, and tamper verification status.
+- **Forward via BLE Relay Button**: Allows one-tap forwarding of eligible distress beacons to further responders.
+- **Transmit BLE Acknowledgment**: Writes `SOS_ACK` with confirmation back to the sender and records receipt in SQLite.
+
+### 4. Emergency History Screen (Offline Ledger & Mesh Relay Hub)
+- **Bluetooth Mesh Activity Banner**: Displays total forwarded alerts, received relays, and configured hop limits.
+- **Hop Count Badges**: Clearly distinguishes direct origin alerts (`📍 DIRECT (HOP 0)`) from multi-hop mesh relays (`🔁 HOP 1/3`, `🔁 HOP 2/3`).
+- **Relay Status Badges**: Identifies `RELAY FORWARDED` and `RELAY ELIGIBLE` alerts.
+- **Inline Relay Forwarding**: Forward eligible received alerts directly from the history ledger.
+- **Technical Audit Drawer**: Expandable inspection showing raw UUIDs, hop counts, forwarding nodes, integrity checksums, and receipt details.
+
+### 5. Profile & Mesh Relay Settings Screen
+- **SOS Mesh Relay Settings Card**:
+  - Switch to toggle relay participation on or off.
+  - Stepper to configure Maximum Allowed Hops (1–5 hops).
+  - Anonymous Node ID display (`node-XXXXXX`) with privacy explanation.
+  - Live Mesh Statistics: Total Forwarded, Total Received, and Filtered/Dropped counts.
+- **Server Gateway Configuration**: Real-time configuration of the backend API URL (supports Android emulators `10.0.2.2`, physical devices over LAN IP, and localhost).
+- **Interactive Gateway Health Check**: One-tap "Test Connection" button calling `/api/health`.
+
+---
+
+## 📶 BLE Hardware Capabilities & Realistic Android Limitations
+
+| Capability | Supported in React Native `react-native-ble-plx`? | Supported in Android Native SDK? | Implementation in RescueLink |
+|---|---|---|---|
+| **BLE Central (Scanning & GATT Client)** | ✅ Full Support | ✅ Full Support | `bleCentralService.js` scans for `e0a90001-...`, connects, requests 512 MTU, reads SOS characteristic, writes ACK. |
+| **BLE Peripheral (GATT Server & Advertising)** | ❌ Not supported by `react-native-ble-plx` | ✅ Supported via `BluetoothLeAdvertiser` & `BluetoothGattServer` | Handled via `blePeripheralService.js` using `react-native-ble-peripheral` native bridge in Expo Dev Builds (`npx expo run:android`), with clear fallback reports in Expo Go. |
+| **Multi-Hop Relay Forwarding** | Supported in hybrid Central/Peripheral mode | Supported via simultaneous multi-role BLE | Central receives SOS, persists to SQLite, triggers Peripheral advertising with incremented hop count. |
+
+> [!NOTE]
+> Android 12+ requires runtime permissions: `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`. Android hardware must support multiple advertising (`BluetoothAdapter.isMultipleAdvertisementSupported()`).
+
+---
+
+## 📱 Three-Device Physical Android Manual Testing Guide
+
+For evaluating the complete multi-hop relay chain across three Android devices:
+- **Device A**: Originator / Survivor (Offline)
+- **Device B**: Intermediate Mesh Relay (Offline)
+- **Device C**: Terminal Relay & Ingestion Gateway (Online with Wi-Fi/Cellular)
+
+| Step | Device | Action | Expected Result | Verification |
+|---|---|---|---|---|
+| **1. Preparation** | Devices A, B, C | Launch RescueLink. Open Profile -> Verify Mesh Relay is Enabled. | Each device displays unique Anonymous Node ID (e.g. `node-a1b2`, `node-c3d4`). | Physical UI |
+| **2. Offline Isolation** | Devices A & B | Enable Airplane Mode (keep Bluetooth ON). | Both devices report Offline / Local Mode. | Physical UI |
+| **3. Create SOS** | Device A | Send SOS -> Select `Test / Drill` -> Tap "Submit Emergency Alert". | Alert saved in SQLite (`hopCount: 0`, `source: 'local'`). | SQLite & UI |
+| **4. Broadcast Beacon** | Device A | Tap "Broadcast via Bluetooth". | Device A advertises GATT service (`isAdvertising: true`). | BLE Radio |
+| **5. Receive Hop 1** | Device B | Open Nearby Devices -> Scan -> Connect to Device A -> Read SOS. | Device B displays alert (`Hop 0 of 3`). Stored in SQLite (`relayStatus: 'eligible'`). Device B sends ACK. | Physical BLE |
+| **6. Relay Forward** | Device B | On received alert, tap **"Forward via BLE Relay"**. | Device B increments hop to 1, sets `forwarderId = Node-B`, and broadcasts forwarded beacon. `relay_history` records `FORWARDED`. | Physical BLE |
+| **7. Receive Hop 2** | Device C | Open Nearby Devices -> Scan -> Connect to Device B -> Read SOS. | Device C receives alert (`Hop 1 of 3 (via Node-B)`). Integrity verified. Enqueued in `sync_queue`. | Physical BLE |
+| **8. Cloud Ingestion** | Device C | Connect Device C to Wi-Fi. Tap "Sync Now" in Emergency History. | Outbox flushes alert to `POST /api/alerts/sync`. Backend records alert as `bluetooth_relay` with Alice's original details and Device B's forwarder attribution! | Cloud Server |
+
+---
+
+## 🧪 Automated Verification & Test Results
+
+The test runner exercises all 6 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
+
+```bash
+# Run complete test suite from repository root:
+npm test --prefix server
+# Or from mobile:
+npm test --prefix mobile
+```
+
+### Verified Test Suite (35/35 Passing)
+
+| Test Module | Test Scenario | Result |
+|---|---|---|
+| **Module 1: Authentication & JWT** | Registration input validation (name length, email format, password length) | **PASS** |
+| | Register creates user with bcrypt salt rounds and returns token without passwordHash | **PASS** |
+| | Rejects duplicate email registration with 409 Conflict | **PASS** |
+| | Login authenticates valid credentials and returns new JWT | **PASS** |
+| | Login returns generic 401 on invalid credentials to prevent account enumeration | **PASS** |
+| | Protected routes reject missing token, bad format, and expired token | **PASS** |
+| **Module 2: Alert REST API & Validation** | Creates alert with supported categories and `Test / Drill` demo mode | **PASS** |
+| | Rejects invalid emergency category, out-of-bounds coordinates, and incomplete coordinates | **PASS** |
+| | Cross-user isolation conceals unowned alerts with 404 (anti-enumeration) | **PASS** |
+| | Direct status transition to "Acknowledged" rejected for senders (reserved for receivers) | **PASS** |
+| | Owner successfully marks alert as Resolved | **PASS** |
+| **Module 3: BLE Protocol & Sanitization** | Serializes SOS_ALERT to Base64 and enforces 512-byte MTU limit [Hardware Mocked] | **PASS** |
+| | Strictly strips sensitive credentials (JWT, passwords, hashes) on serialize/deserialize | **PASS** |
+| | Safely handles malformed JSON and corrupted Base64 strings without throwing errors | **PASS** |
+| **Module 4: SQLite Offline Persistence** | Migrations v1, v2, and v3 apply idempotently and create all tables and indexes | **PASS** |
+| | Persists alert with distinct delivery, ack, and sync states | **PASS** |
+| | Duplicate prevention updates existing alert without creating duplicate rows | **PASS** |
+| | Recording message receipt atomically updates `alerts.ackStatus` to "acknowledged" | **PASS** |
+| **Module 5: Outbox & Cloud Sync** | Enqueue deduplication updates existing item instead of creating duplicate | **PASS** |
+| | Exponential backoff calculation respects base delay (5s) and max cap (300s) | **PASS** |
+| | Batch sync to backend records BLE relay attribution without impersonating peer | **PASS** |
+| | Backend sync is idempotent (re-upload returns `already_synced` without duplication) | **PASS** |
+| | Partial batch failures reject bad items without failing valid ones | **PASS** |
+| | End-to-end sync flushes outbox, deletes queue row, and marks SQLite alert "synced" | **PASS** |
+| | Authentication expiration (401) preserves local outbox items without deleting | **PASS** |
+| **Module 6: Multi-Device SOS Relay Network** | Serializes valid relay SOS_ALERT with hop count, integrity hash, and under 512 MTU | **PASS** |
+| | Integrity verification detects modified distress details or coordinates (tamper check) | **PASS** |
+| | Rejects expired alerts (past TTL) and records DROPPED event in SQLite | **PASS** |
+| | Deduplicates repeated alerts and prevents double-forwarding | **PASS** |
+| | Enforces maximum hop count (`hopCount >= maxHops`) and suppresses forward | **PASS** |
+| | Prevents relay loops from own node or previous forwarder | **PASS** |
+| | Relay disabled setting saves locally for personal triage & cloud sync but drops forward | **PASS** |
+| | Rate limiting throttles rapid sequential forward broadcasts (sliding window) | **PASS** |
+| | SQLite Migration v3 persists `relay_history` and reports accurate aggregate stats | **PASS** |
+| | Three-Device Multi-Hop Simulation (A -> B -> C) synchronizes to Cloud backend | **PASS** |
+
+---
+
+## 🧭 Project Roadmap
+
+- [x] **Step 1: Project Setup and SOS Mobile UI** (Completed)
+- [x] **Step 2: User Authentication & JWT-Protected APIs** (Completed)
+- [x] **Step 3: SOS Alert Creation & Emergency Alert Management** (Completed)
+- [x] **Step 4: Real Bluetooth Low Energy (BLE) Communication** (Completed)
+- [x] **Step 5: SQLite Offline Storage & Reliable Alert Persistence** (Completed)
+- [x] **Step 6: Reliable Offline-to-Cloud Synchronization** (Completed)
+- [x] **Step 7: Final Integration, Comprehensive Testing & Security Review** (Completed)
+- [x] **Step 8: Multi-Device SOS Relay Network** (Completed)
+  - Version 2 Protocol with hop count, max hops, expiration TTL, and tamper-resistant checksum
+  - SQLite Schema Migration v3 (`alerts` relay columns and `relay_history` audit table)
+  - Complete relay admission engine: loop prevention, duplicate suppression, hop limit, rate limit
+  - UI integrations: Profile Mesh Relay settings, anonymous Node ID, History mesh badges, Nearby Devices forward button
+  - Idempotent backend cloud sync with multi-hop relay attribution
+  - 35/35 passing automated tests & 3-device manual testing protocol
+- [ ] **Future Enhancements (Post-Prototype)**
+  - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
+  - Live GIS interactive distress map dashboard for incident response centers
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+
 ```
 
 ---

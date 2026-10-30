@@ -117,13 +117,19 @@ class BlePeripheralService {
 
     // 3. Serialize SOS Alert payload
     const sosPayload = buildSOSAlertPayload({
-      alertId: alertData.id,
+      alertId: alertData.alertId || alertData.id,
       emergencyType: alertData.emergencyType,
       details: alertData.details,
       senderName: alertData.senderName,
-      latitude: alertData.location?.latitude || null,
-      longitude: alertData.location?.longitude || null,
+      latitude: alertData.location?.latitude ?? alertData.latitude ?? null,
+      longitude: alertData.location?.longitude ?? alertData.longitude ?? null,
       createdAt: alertData.createdAt,
+      originalSenderId: alertData.originalSenderId || alertData.senderId || null,
+      forwarderId: alertData.forwarderId || null,
+      hopCount: typeof alertData.hopCount === 'number' ? alertData.hopCount : 0,
+      maxHops: typeof alertData.maxHops === 'number' ? alertData.maxHops : 3,
+      expiresAt: alertData.expiresAt || null,
+      integrityHash: alertData.integrityHash || null,
     });
 
     const serializedPayload = serializeBLEMessage(sosPayload);

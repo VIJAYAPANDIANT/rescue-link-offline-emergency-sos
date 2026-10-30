@@ -12,11 +12,20 @@ export const SOS_ACK_CHAR_UUID = 'e0a90003-b5a3-f393-e0a9-e50e24dcca9e';   // Wr
 
 // Protocol Parameters
 export const BLE_PROTOCOL = {
-  VERSION: 1,
+  VERSION: 2,
+  SUPPORTED_VERSIONS: [1, 2],
   // 512 bytes is the standard maximum characteristic payload across modern Android BLE stacks
   MAX_PAYLOAD_BYTES: 512,
   DEFAULT_SCAN_TIMEOUT_MS: 30000, // 30s auto-scan stop to conserve battery
   CONNECT_TIMEOUT_MS: 15000,
+  // Multi-Device Relay Parameters
+  RELAY_LIMITS: {
+    DEFAULT_MAX_HOPS: 3,
+    ABSOLUTE_MAX_HOPS: 5,
+    DEFAULT_TTL_HOURS: 24,
+    MAX_FORWARD_RATE_COUNT: 5,
+    MAX_FORWARD_RATE_WINDOW_MS: 60000, // 1 minute sliding window
+  },
 };
 
 // Valid Message Types

@@ -2,7 +2,7 @@
  * RescueLink Alert Repository
  *
  * Provides data-access operations for emergency SOS distress records in SQLite.
- * Handles persistence, queries, duplicate prevention, and state updates.
+ * Handles persistence, queries, duplicate prevention, relay routing metadata, and state updates.
  */
 
 import { getDatabase } from './database.js';
@@ -64,6 +64,14 @@ export class AlertRepository {
           deliveryStatus = ?,
           ackStatus = ?,
           syncStatus = ?,
+          hopCount = COALESCE(?, hopCount),
+          maxHops = COALESCE(?, maxHops),
+          forwarderId = COALESCE(?, forwarderId),
+          originalSenderId = COALESCE(?, originalSenderId),
+          expiresAt = COALESCE(?, expiresAt),
+          relayStatus = COALESCE(?, relayStatus),
+          lastForwardedAt = COALESCE(?, lastForwardedAt),
+          integrityHash = COALESCE(?, integrityHash),
           updatedAt = ?
         WHERE alertId = ?;`,
         [
@@ -77,6 +85,14 @@ export class AlertRepository {
           finalDeliveryStatus,
           finalAckStatus,
           finalSyncStatus,
+          typeof alertData.hopCount === 'number' ? alertData.hopCount : null,
+          typeof alertData.maxHops === 'number' ? alertData.maxHops : null,
+          alertData.forwarderId || null,
+          alertData.originalSenderId || null,
+          alertData.expiresAt || null,
+          alertData.relayStatus || null,
+          alertData.lastForwardedAt || null,
+          alertData.integrityHash || null,
           nowIso,
           alertId,
         ]
@@ -97,6 +113,9 @@ export class AlertRepository {
     const syncStatus = alertData.syncStatus || (source === 'server' ? 'synced' : 'pending_sync');
     const createdAt = alertData.createdAt || nowIso;
     const updatedAt = alertData.updatedAt || nowIso;
+    const hopCount = typeof alertData.hopCount === 'number' ? alertData.hopCount : 0;
+    const maxHops = typeof alertData.maxHops === 'number' ? alertData.maxHops : 3;
+    const relayStatus = alertData.relayStatus || (source === 'bluetooth' ? 'received' : 'none');
 
     await db.runAsync(
       `INSERT INTO alerts (
@@ -113,8 +132,16 @@ export class AlertRepository {
         deliveryStatus,
         ackStatus,
         syncStatus,
-        updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        updatedAt,
+        hopCount,
+        maxHops,
+        forwarderId,
+        originalSenderId,
+        expiresAt,
+        relayStatus,
+        lastForwardedAt,
+        integrityHash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         alertId,
         alertData.senderId || null,
@@ -130,6 +157,14 @@ export class AlertRepository {
         ackStatus,
         syncStatus,
         updatedAt,
+        hopCount,
+        maxHops,
+        alertData.forwarderId || null,
+        alertData.originalSenderId || null,
+        alertData.expiresAt || null,
+        relayStatus,
+        alertData.lastForwardedAt || null,
+        alertData.integrityHash || null,
       ]
     );
 
@@ -158,6 +193,7 @@ export class AlertRepository {
     deliveryStatus,
     ackStatus,
     syncStatus,
+    relayStatus,
     limit = 100,
     offset = 0,
   } = {}) {
@@ -185,6 +221,11 @@ export class AlertRepository {
       params.push(syncStatus);
     }
 
+    if (relayStatus && relayStatus !== 'ALL') {
+      whereClauses.push('relayStatus = ?');
+      params.push(relayStatus);
+    }
+
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const query = `
       SELECT * FROM alerts
@@ -195,6 +236,57 @@ export class AlertRepository {
     params.push(limit, offset);
 
     return db.getAllAsync(query, params);
+  }
+
+  /**
+   * Get alerts that are currently eligible for multi-device relay forwarding.
+   * Must be received over BLE, not expired, hopCount < maxHops, and not already forwarded.
+   *
+   * @param {object} [options]
+   * @param {number} [options.maxHops=3]
+   * @returns {Promise<Array>}
+   */
+  static async getRelayEligibleAlerts({ maxHops = 3 } = {}) {
+    const db = await getDatabase();
+    const nowIso = new Date().toISOString();
+
+    const query = `
+      SELECT * FROM alerts
+      WHERE source = 'bluetooth'
+        AND (relayStatus = 'received' OR relayStatus = 'eligible')
+        AND hopCount < ?
+        AND (expiresAt IS NULL OR expiresAt > ?)
+        AND alertId NOT IN (
+          SELECT alertId FROM relay_history WHERE action = 'FORWARDED'
+        )
+      ORDER BY createdAt DESC;
+    `;
+
+    return db.getAllAsync(query, [maxHops, nowIso]);
+  }
+
+  /**
+   * Update the relay status and forwarding timestamp of an alert.
+   *
+   * @param {string} alertId
+   * @param {string} relayStatus
+   * @param {string} [lastForwardedAt]
+   */
+  static async updateRelayStatus(alertId, relayStatus, lastForwardedAt = null) {
+    if (!alertId || !relayStatus) return null;
+    const db = await getDatabase();
+    const nowIso = new Date().toISOString();
+
+    await db.runAsync(
+      `UPDATE alerts SET
+        relayStatus = ?,
+        lastForwardedAt = COALESCE(?, lastForwardedAt),
+        updatedAt = ?
+      WHERE alertId = ?;`,
+      [relayStatus, lastForwardedAt, nowIso, alertId]
+    );
+
+    return this.getAlertById(alertId);
   }
 
   /**

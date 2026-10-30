@@ -2,118 +2,204 @@
 
 ## 1. System Overview
 
-**RescueLink** is an offline-first emergency distress signaling and peer-to-peer relay system. In disaster scenarios, power grid failures, and remote wilderness areas where cellular and broadband networks fail, RescueLink enables mobile devices to persist emergency beacons in local SQLite storage, broadcast distress signals over custom Bluetooth Low Energy (BLE) GATT profiles, exchange peer acknowledgments, and opportunistically relay distress data to the central cloud once connectivity is restored.
+**RescueLink** is an offline-first emergency distress signaling, peer-to-peer relay, and cloud-synchronization system. In disaster scenarios, power grid failures, and remote wilderness areas where cellular and broadband networks fail, RescueLink enables mobile devices to persist emergency beacons in local SQLite storage, broadcast distress signals over custom Bluetooth Low Energy (BLE) GATT profiles, exchange peer acknowledgments, form multi-device mesh forwarding paths, and opportunistically relay distress data to the central cloud once connectivity is restored.
+
+---
+
+## 2. Multi-Device SOS Relay Network Architecture (Step 8)
+
+RescueLink implements a controlled, multi-device epidemic forwarding protocol designed specifically for zero-infrastructure emergency communications. When Device A (the originator) has no cellular coverage, it broadcasts an SOS beacon over Bluetooth Low Energy. Device B discovers and records the beacon, and acting as an intermediate relay hop, forwards it over BLE to Device C. When any device in the relay chain (such as Device C) regains internet access, the distress alert is automatically synchronized with the central cloud backend.
 
 ```mermaid
 graph TD
-    subgraph DeviceA ["Sender Device (Offline)"]
-        UserA["Responder / Civilian"] --> SOS["Send SOS Screen"]
-        SOS --> SQLiteA[("SQLite Database<br/>(WAL Journal Mode)")]
-        SQLiteA --> OutboxA["Sync Queue (Outbox)"]
-        SOS --> GATTServer["BLE Peripheral GATT Server<br/>(Service UUID: e0a90001-...)"]
-        GATTServer --> Adv["BLE Advertising Beacon"]
+    subgraph DeviceA ["Device A: Originator (Offline)"]
+        UserA["Survivor / Initiator"] --> ComposerA["Send SOS Screen"]
+        ComposerA --> SQLiteA[("SQLite Database<br/>(hopCount = 0, source = 'local')")]
+        ComposerA --> AdvA["BLE Broadcaster / GATT Server<br/>(Protocol v2, Integrity Hash)"]
     end
 
-    subgraph BLEMesh ["Device-to-Device BLE Signaling (MTU 512)"]
-        Adv -. "BLE Scan Discovery" .-> Scan["Nearby Devices Scanner"]
-        Scan -. "GATT Connect & Read" .-> ReadChar["SOS Alert Characteristic<br/>(UUID: e0a90002-...)"]
-        WriteACK["GATT Write Acknowledgment<br/>(UUID: e0a90003-...)"] -. "BLE Write with Response" .-> ConfACK["Confirmed ACK"]
+    subgraph Hop1 ["Bluetooth Low Energy Hop 1 (MTU <= 512 Bytes)"]
+        AdvA -. "BLE Direct Discovery & Read<br/>(hopCount = 0, alertId = X)" .-> ScannerB["BLE Central Scanner"]
     end
 
-    subgraph DeviceB ["Receiver / Relay Device"]
-        ReadChar --> SQLiteB[("SQLite Database<br/>(alerts: source='bluetooth')")]
-        SQLiteB --> OutboxB["Sync Queue (Outbox)<br/>(Relay Operation)"]
-        WriteACK --> ReceiptsB[("Receipts Ledger<br/>(BLE_ACK_SENT)")]
-        ConfACK --> ReceiptsA[("Sender Receipts<br/>(BLE_ACK_RECEIVED)")]
+    subgraph DeviceB ["Device B: Intermediate Mesh Relay (Offline)"]
+        ScannerB --> RelayEngineB["Relay Admission Engine<br/>• Integrity Check<br/>• TTL / Expiration Check<br/>• Loop Prevention<br/>• Hop Limit Check<br/>• Rate Limiter"]
+        RelayEngineB --> SQLiteB[("SQLite Database<br/>(alerts: hopCount = 0, relayStatus = 'eligible')")]
+        RelayEngineB --> HistoryB[("Relay History Ledger<br/>(action: 'RECEIVED')")]
+        RelayEngineB --> ForwarderB["Forward Alert Engine<br/>• Increment hopCount = 1<br/>• Preserve Original Content & Hash<br/>• Set forwarderId = Node-B"]
+        ForwarderB --> AdvB["BLE Broadcaster / GATT Server<br/>(Forwarded Beacon)"]
     end
 
-    subgraph CloudSync ["Opportunistic Cloud Synchronization"]
-        OutboxB --> NetCheck{"Network & Reachability<br/>(NetInfo + Health Ping)"}
-        NetCheck -- Online --> SyncEngine["Sync Service<br/>(Exponential Backoff)"]
-        SyncEngine --> POSTSync["POST /api/alerts/sync<br/>(Bearer JWT Protected)"]
-        POSTSync --> Backend["Express.js Server"]
-        Backend --> AlertStore[("Central Alert Storage<br/>(alerts.json / Atomic Mutex)")]
+    subgraph Hop2 ["Bluetooth Low Energy Hop 2 (MTU <= 512 Bytes)"]
+        AdvB -. "BLE Forwarded Discovery & Read<br/>(hopCount = 1, forwarderId = Node-B)" .-> ScannerC["BLE Central Scanner"]
+    end
+
+    subgraph DeviceC ["Device C: Terminal Relay & Ingestion Gateway (Online)"]
+        ScannerC --> RelayEngineC["Relay Admission Engine<br/>(Admitted as Hop 1)"]
+        RelayEngineC --> SQLiteC[("SQLite Database<br/>(alerts: hopCount = 1, relayStatus = 'received')")]
+        RelayEngineC --> OutboxC["Sync Queue (Outbox)<br/>(Relay Enqueued)"]
+        OutboxC --> NetCheckC{"Internet Reachable?<br/>(NetInfo + Health Ping)"}
+        NetCheckC -- Online --> CloudSync["Cloud Sync Engine<br/>(POST /api/alerts/sync)"]
+    end
+
+    subgraph CentralCloud ["RescueLink Cloud Infrastructure"]
+        CloudSync --> ExpressAPI["Express.js REST Gateway"]
+        ExpressAPI --> AuthCheck["JWT Authenticated Relay Validation"]
+        AuthCheck --> AlertStore[("Central Alert Storage<br/>• Preserves Originator Name & Details<br/>• Records Hop Count & Forwarder ID<br/>• Attributed to Relayed User ID")]
     end
 ```
 
 ---
 
-## 2. Complete Data Flow
+## 3. Message Protocol Specification (Version 2)
 
-1. **SOS Creation & Offline Persistence**:
-   - The user selects an emergency category (`Medical Emergency`, `Accident`, `Personal Safety`, `Fire`, `Other`, or `Test / Drill`).
-   - The user optionally consents to attach GPS coordinates.
-   - The alert is immediately saved into SQLite (`alerts` table) with:
-     - `source = 'local'`
-     - `deliveryStatus = 'pending'`
-     - `ackStatus = 'unacknowledged'`
-     - `syncStatus = 'pending_sync'`
-   - If the backend is unreachable or offline, an operation is enqueued into the `sync_queue` table.
+RescueLink uses a compact, versioned JSON message structure Base64-encoded to fit within standard 512-byte BLE characteristic Maximum Transmission Units (MTU).
 
-2. **BLE Broadcast (Sender)**:
-   - The user activates "Broadcast via Bluetooth".
-   - The GATT server initializes the custom 128-bit service (`e0a90001-b5a3-f393-e0a9-e50e24dcca9e`).
-   - The alert payload is serialized to Base64 (sanitized, max 512 bytes MTU).
-   - The device advertises its availability.
+### 3.1 SOS_ALERT Payload Schema
+```json
+{
+  "version": 2,
+  "type": "SOS_ALERT",
+  "alertId": "550e8400-e29b-41d4-a716-446655440000",
+  "emergencyType": "Medical Emergency",
+  "details": "Compound fracture on ridge trail. Bleeding controlled.",
+  "senderName": "Alice Survivor",
+  "latitude": 37.7749,
+  "longitude": -122.4194,
+  "createdAt": "2026-10-30T10:00:00.000Z",
+  "expiresAt": "2026-10-31T10:00:00.000Z",
+  "originalSenderId": "user-uuid-device-a",
+  "forwarderId": "node-7b8c2d",
+  "hopCount": 1,
+  "maxHops": 3,
+  "integrityHash": "4a7f9c2e"
+}
+```
 
-3. **BLE Discovery & Reception (Receiver)**:
-   - A nearby peer running RescueLink scans for `e0a90001-...`.
-   - The receiver discovers the sender with real RSSI metrics.
-   - The receiver connects, reads `e0a90002-...`, and deserializes the distress beacon.
-   - The alert is persisted into the receiver's SQLite with `source = 'bluetooth'` and `deliveryStatus = 'received'`.
-   - The receiver enqueues the alert in their local `sync_queue` to act as an opportunistic cloud relay.
-
-4. **BLE Acknowledgment**:
-   - The receiver writes `SOS_ACK` to `e0a90003-...` with confirmation.
-   - The receiver records a receipt in `message_receipts` (`receiptType = 'BLE_ACK_SENT'`).
-   - The sender receives confirmation, records a receipt (`receiptType = 'BLE_ACK_RECEIVED'`), and atomically updates `alerts.ackStatus = 'acknowledged'`.
-
-5. **Opportunistic Cloud Synchronization**:
-   - When either device re-establishes internet connectivity, `networkService` detects reachability.
-   - `syncService` processes eligible outbox items in batches of 10.
-   - Payloads are submitted to `POST /api/alerts/sync` with Bearer JWT authentication.
-   - The server validates data, enforces idempotency using stable `alertId`s, and assigns proper relay attribution.
-   - Upon confirmation, local SQLite records are updated to `syncStatus = 'synced'` and deleted from `sync_queue`.
-
----
-
-## 3. State & Data Consistency Model
-
-RescueLink maintains strict separation between independent physical and transport states:
-
-| State Variable | Table / Field | Allowed Values | Semantic Meaning |
+### 3.2 Protocol Fields Definition
+| Field | Type | Description | Mutable by Relay? |
 |---|---|---|---|
-| **Delivery Status** | `alerts.deliveryStatus` | `'pending'`, `'received'`, `'Resolved'` | Progress of incident resolution. Sender sets Pending; receiver sets Received; either party can mark Resolved. |
-| **Acknowledgment Status** | `alerts.ackStatus` | `'unacknowledged'`, `'acknowledged'` | Direct peer-to-peer confirmation over BLE. Never marked acknowledged until GATT confirmation is received. |
-| **Sync Status** | `alerts.syncStatus` | `'pending_sync'`, `'synced'`, `'not_synced'` | Cloud backend synchronization state. Independent of BLE delivery or acknowledgment. |
-| **Source Attribution** | `alerts.source` | `'local'`, `'bluetooth'`, `'server'` | Physical origin of alert. Distinguishes self-authored alerts from peer-relayed beacons. |
-| **Outbox Queue State** | `sync_queue.status` | `'pending'`, `'processing'`, `'failed'` | Cloud dispatch queue state. Controlled by concurrency locks and exponential backoff timers. |
+| `version` | Integer | Protocol specification version (`1` or `2`). | No |
+| `type` | String | Fixed message identifier (`SOS_ALERT` or `SOS_ACK`). | No |
+| `alertId` | String (UUID) | Immutable unique identifier generated at origin. | No |
+| `emergencyType` | String | Category: Medical, Accident, Personal Safety, Fire, Other, Test / Drill. | No |
+| `details` | String | Plaintext description bounded to 180 characters. | No |
+| `senderName` | String | Survivor display name bounded to 40 characters. | No |
+| `latitude` | Number \| null | GPS latitude (4-decimal precision, -90 to 90). | No |
+| `longitude` | Number \| null | GPS longitude (4-decimal precision, -180 to 180). | No |
+| `createdAt` | String (ISO) | Original alert timestamp at creation. | No |
+| `expiresAt` | String (ISO) | Message expiration timestamp (default `createdAt` + 24 hours). | No |
+| `originalSenderId`| String \| null | Cryptographic or user identifier of the original author. | No |
+| `integrityHash` | String (8 hex) | Deterministic FNV-1a checksum of all immutable fields. | **NEVER** |
+| `forwarderId` | String | Anonymous node identifier of the forwarding device (`node-XXXXXX`). | **Yes (Updated by forwarder)** |
+| `hopCount` | Integer | Number of network hops completed so far (0 at origin). | **Yes (Incremented by forwarder)** |
+| `maxHops` | Integer | Maximum permissible hop limit (default 3, range 1–5). | No |
 
-> [!WARNING]
-> **Safety Invariant**: RescueLink never treats "saved locally" or "sent over BLE" as "delivered to emergency services". Unless a certified dispatch hotlink is explicitly verified, the app displays: *"Local / Mesh transmission only. Official emergency services (911/112) have NOT been contacted."*
+### 3.3 Cryptographic Content Integrity Validation
+To guarantee that forwarders never modify distress coordinates, emergency categories, or details in transit, `computeAlertIntegrityHash` calculates a 32-bit FNV-1a checksum across the normalized immutable fields:
+$$\text{Content} = \text{alertId} \parallel \text{emergencyType} \parallel \text{details} \parallel \text{lat} \parallel \text{lon} \parallel \text{createdAt} \parallel \text{originalSenderId}$$
+
+Every intermediate node validates `verifyAlertIntegrity(alert)`. If a forwarding node alters the distress message, coordinates, or emergency type, the hash check fails immediately with `INTEGRITY_MISMATCH`, and the tampered packet is dropped.
 
 ---
 
-## 4. Security Architecture & Threat Mitigation
+## 4. Relay Admission Controls & Safeguards
 
-### 4.1 Credential & Token Isolation
-- Plaintext passwords, bcrypt hashes, and JWT tokens are **never** included in BLE messages or logged.
-- The `sanitizeBLEPayload()` utility sanitizes all outgoing and incoming characteristics.
+To prevent Denial of Service (DoS), infinite routing loops, and radio congestion, `relayService` executes a multi-stage admission pipeline:
 
-### 4.2 Bluetooth Protocol Boundaries
-- **512-Byte MTU Hard Limit**: Prevents buffer overflows and packet fragmentation.
-- **Malformed Message Resilience**: `deserializeBLEMessage()` catches invalid JSON or corrupted Base64 and returns `{ valid: false }` without crashing the application.
-- **Duplicate Message Filtering**: Receiving the same `alertId` multiple times over BLE updates the existing record rather than generating redundant incident reports.
+1. **Integrity Validation**: Rejects any message where calculated checksum does not match `integrityHash`.
+2. **Expiration Enforcement (TTL)**: Compares `expiresAt` with system clock. Expired alerts are dropped (`EXPIRED`).
+3. **Loop Prevention**:
+   - Rejects alerts originating from own user ID or own node ID (`LOOP_DETECTED`).
+   - Rejects alerts where `forwarderId` matches own node ID (`LOOP_PREVIOUS_FORWARDER`).
+   - Rejects alerts already forwarded by this node via SQLite `relay_history` query (`ALREADY_FORWARDED`).
+4. **Duplicate Detection**:
+   - If `alertId` already exists in SQLite with equal or lower hop count, further re-broadcasts are suppressed (`DUPLICATE_ALERT`).
+5. **Relay Enabled Switch**:
+   - Responders can toggle "SOS Mesh Relay" in Profile settings.
+   - When disabled, incoming alerts are saved locally for personal triage and queued for cloud sync, but **not** forwarded over BLE (`RELAY_DISABLED`).
+6. **Maximum Hop Limit Enforcement**:
+   - Clamped between 1 and 5 (default 3). If `hopCount >= maxHops`, forwarding is suppressed (`HOP_LIMIT_REACHED`).
+7. **Sliding-Window Rate Limiting**:
+   - Maximum 5 forward broadcasts per 60-second sliding window (`RATE_LIMIT_EXCEEDED`). Protects radio saturation and battery exhaustion.
 
-### 4.3 Relay Attribution Model
-- When an authenticated user relays an alert received over BLE, the backend marks:
-  - `source = 'bluetooth_relay'`
-  - `relayedBy = req.user.id` (Authenticated uploader)
-  - `relayedByName = req.user.name`
-  - `senderName = originalSenderName` (Preserves original peer identity)
-- This prevents peer impersonation and maintains forensic integrity.
+---
 
-### 4.4 Known Architectural Limitations
-1. **Unencrypted BLE Advertisements**: BLE GATT characteristics in this prototype are unencrypted at the Bluetooth radio layer to permit universal discovery across non-paired devices. Production deployments should implement end-to-end Curve25519 public key cryptography.
-2. **Replay Attacks**: A malicious node could rebroadcast a captured BLE beacon. Mitigated in RescueLink via stable `alertId` deduplication in SQLite and on the server.
-3. **Physical Range**: BLE Class 2 range is nominally 10–30 meters line-of-sight and decreases through reinforced walls or physical barriers.
+## 5. SQLite Schema & Migrations
+
+RescueLink uses version-tracked migrations applied via `PRAGMA user_version`:
+
+### Migration v1 (Step 5)
+- `alerts`: Core emergency distress records table.
+- `message_receipts`: Delivery and acknowledgment receipts table.
+- `sync_queue`: Offline outbox queue table.
+
+### Migration v2 (Step 6)
+- Adds exponential backoff scheduling (`lastAttemptAt`, `nextRetryAt`) and unique constraints (`idx_sync_queue_alert_op`) to `sync_queue`.
+
+### Migration v3 (Step 8 — Multi-Device Relay)
+- Extends `alerts` table with relay metadata:
+  ```sql
+  ALTER TABLE alerts ADD COLUMN hopCount INTEGER DEFAULT 0;
+  ALTER TABLE alerts ADD COLUMN maxHops INTEGER DEFAULT 3;
+  ALTER TABLE alerts ADD COLUMN forwarderId TEXT;
+  ALTER TABLE alerts ADD COLUMN originalSenderId TEXT;
+  ALTER TABLE alerts ADD COLUMN expiresAt TEXT;
+  ALTER TABLE alerts ADD COLUMN relayStatus TEXT DEFAULT 'none';
+  ALTER TABLE alerts ADD COLUMN lastForwardedAt TEXT;
+  ALTER TABLE alerts ADD COLUMN integrityHash TEXT;
+  ```
+- Creates `relay_history` table for immutable auditing:
+  ```sql
+  CREATE TABLE IF NOT EXISTS relay_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alertId TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('RECEIVED', 'FORWARDED', 'DROPPED')),
+    hopCount INTEGER NOT NULL DEFAULT 0,
+    forwarderId TEXT,
+    previousHopId TEXT,
+    statusReason TEXT,
+    timestamp TEXT NOT NULL,
+    metadata TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_relay_history_alert_id ON relay_history(alertId);
+  CREATE INDEX IF NOT EXISTS idx_relay_history_action ON relay_history(action);
+  CREATE INDEX IF NOT EXISTS idx_relay_history_timestamp ON relay_history(timestamp DESC);
+  ```
+
+---
+
+## 6. BLE Capabilities & Realistic Android Hardware Nuances
+
+| Capability | Supported in React Native `react-native-ble-plx`? | Supported in Android Native SDK? | Implementation in RescueLink |
+|---|---|---|---|
+| **BLE Central (Scanning & GATT Client)** | ✅ Full Support | ✅ Full Support | `bleCentralService.js` scans for `e0a90001-...`, connects, requests 512 MTU, reads SOS characteristic, writes ACK. |
+| **BLE Peripheral (GATT Server & Advertising)** | ❌ Not supported by `react-native-ble-plx` | ✅ Supported via `BluetoothLeAdvertiser` & `BluetoothGattServer` | Handled via `blePeripheralService.js` using `react-native-ble-peripheral` native bridge in Expo Dev Builds (`npx expo run:android`), with clear fallback reports in Expo Go. |
+| **Multi-Hop Relay Forwarding** | Supported in hybrid Central/Peripheral mode | Supported via simultaneous multi-role BLE | Central receives SOS, persists to SQLite, triggers Peripheral advertising with incremented hop count. |
+
+> [!NOTE]
+> Android 12+ requires runtime permissions: `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`. Android hardware must support multiple advertising (`BluetoothAdapter.isMultipleAdvertisementSupported()`).
+
+---
+
+## 7. Comprehensive Automated Test Matrix (35 Tests)
+
+The test runner (`tests/run-all-tests.mjs`) exercises all 6 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
+
+1. **Module 1**: Authentication, JWT & Security (6 tests)
+2. **Module 2**: Emergency Alert REST API & Validation (5 tests)
+3. **Module 3**: BLE Protocol & Sanitization (3 tests)
+4. **Module 4**: SQLite Offline Persistence & Migrations v1–v3 (4 tests)
+5. **Module 5**: Offline Outbox & Cloud Synchronization (7 tests)
+6. **Module 6**: Multi-Device SOS Relay Network (10 tests)
+   - Valid relay message serialization & integrity hashing
+   - Content tampering detection via checksum mismatch
+   - Expiration / TTL rejection
+   - Duplicate alert detection & idempotency
+   - Maximum hop count enforcement
+   - Loop prevention (own-origin and previous forwarder)
+   - Relay disabled setting enforcement
+   - Sliding-window rate limiting
+   - SQLite relay-history persistence & aggregate stats
+   - Three-device multi-hop simulation with backend cloud sync

@@ -5,16 +5,16 @@
  * permission management, and state reporting.
  */
 
-import { bleCentralService } from './bleCentralService';
-import { blePeripheralService } from './blePeripheralService';
-import { BlePermissionsManager } from './blePermissions';
+import { bleCentralService } from './bleCentralService.js';
+import { blePeripheralService } from './blePeripheralService.js';
+import { BlePermissionsManager } from './blePermissions.js';
 import {
   RESCUELINK_SERVICE_UUID,
   SOS_ALERT_CHAR_UUID,
   SOS_ACK_CHAR_UUID,
   BLE_STATES,
   BLE_PROTOCOL,
-} from './bleConstants';
+} from './bleConstants.js';
 
 class BluetoothService {
   constructor() {

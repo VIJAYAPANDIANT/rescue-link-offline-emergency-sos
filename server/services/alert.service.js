@@ -395,6 +395,9 @@ class AlertService {
           source: finalSource,
           relayedBy,
           relayedByName,
+          hopCount: typeof item.hopCount === 'number' ? item.hopCount : 0,
+          forwarderId: item.forwarderId || null,
+          originalSenderId: item.originalSenderId || null,
           status: item.deliveryStatus === 'Resolved' || item.status === 'Resolved' ? 'Resolved' : 'Pending',
           createdAt: item.createdAt || new Date().toISOString(),
         });

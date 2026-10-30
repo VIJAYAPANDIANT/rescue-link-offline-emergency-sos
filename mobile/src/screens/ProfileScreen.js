@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,9 +10,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Switch,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api/apiClient';
+import { relaySettings } from '../services/relay/relaySettings';
+import { RelayRepository } from '../database';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EmptyState } from '../components/EmptyState';
 import { colors, spacing, borderRadius, shadows } from '../utils/theme';
@@ -23,6 +26,39 @@ export const ProfileScreen = ({ navigation }) => {
   const [serverUrlInput, setServerUrlInput] = useState(apiClient.getBaseUrl());
   const [isTestingGateway, setIsTestingGateway] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState(null);
+
+  // Step 8: Multi-Device Mesh Relay State
+  const [relayEnabled, setRelayEnabled] = useState(relaySettings.isRelayEnabled());
+  const [maxHops, setMaxHops] = useState(relaySettings.getMaxHops());
+  const [nodeId, setNodeId] = useState(relaySettings.getNodeId());
+  const [relayStats, setRelayStats] = useState({ totalReceived: 0, totalForwarded: 0, totalDropped: 0 });
+
+  useEffect(() => {
+    const loadRelayData = async () => {
+      await relaySettings.initialize();
+      setRelayEnabled(relaySettings.isRelayEnabled());
+      setMaxHops(relaySettings.getMaxHops());
+      setNodeId(relaySettings.getNodeId());
+
+      try {
+        const stats = await RelayRepository.getRelayStats();
+        setRelayStats(stats);
+      } catch (e) {
+        // Table not yet migrated or empty
+      }
+    };
+    loadRelayData();
+  }, []);
+
+  const handleToggleRelay = async (val) => {
+    setRelayEnabled(val);
+    await relaySettings.setRelayEnabled(val);
+  };
+
+  const handleSelectMaxHops = async (hops) => {
+    setMaxHops(hops);
+    await relaySettings.setMaxHops(hops);
+  };
 
   const handleTestGateway = async () => {
     setIsTestingGateway(true);
@@ -161,6 +197,82 @@ export const ProfileScreen = ({ navigation }) => {
             />
           </View>
         )}
+
+        {/* Step 8: Multi-Device SOS Mesh Relay Settings */}
+        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
+          <View style={styles.relayToggleHeader}>
+            <View style={{ flex: 1, paddingRight: spacing.sm }}>
+              <Text style={styles.cardHeaderTitle}>📡 SOS Mesh Relay Network</Text>
+              <Text style={styles.cardHeaderCaption}>
+                Cooperate in emergency forwarding to help nearby distress beacons reach rescuers.
+              </Text>
+            </View>
+            <Switch
+              value={relayEnabled}
+              onValueChange={handleToggleRelay}
+              trackColor={{ false: colors.border, true: colors.primaryLight }}
+              thumbColor={relayEnabled ? colors.primary : colors.surfaceSubtle}
+            />
+          </View>
+
+          {/* Node Identity Box */}
+          <View style={styles.nodeIdBox}>
+            <View>
+              <Text style={styles.nodeIdLabel}>ANONYMOUS MESH NODE ID</Text>
+              <Text style={styles.nodeIdValue}>{nodeId || 'Generating...'}</Text>
+            </View>
+            <View style={styles.privacyBadge}>
+              <Text style={styles.privacyBadgeText}>🔒 PRIVACY PRESERVED</Text>
+            </View>
+          </View>
+          <Text style={styles.nodeIdExplanation}>
+            This randomized identifier routes multi-hop packets without leaking your name, phone, or email.
+          </Text>
+
+          <View style={styles.divider} />
+
+          {/* Maximum Hops Selector */}
+          <Text style={styles.inputLabel}>Maximum Relay Hops:</Text>
+          <View style={styles.hopsRow}>
+            {[1, 2, 3, 4, 5].map((h) => {
+              const isSelected = maxHops === h;
+              return (
+                <TouchableOpacity
+                  key={h}
+                  style={[styles.hopPill, isSelected && styles.hopPillActive]}
+                  onPress={() => handleSelectMaxHops(h)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.hopPillText, isSelected && styles.hopPillTextActive]}>
+                    {h} Hop{h > 1 ? 's' : ''}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={styles.hopsExplanation}>
+            Controls how many sequential devices may forward an SOS before it halts to prevent network saturation.
+          </Text>
+
+          <View style={styles.divider} />
+
+          {/* Relay Statistics */}
+          <Text style={styles.inputLabel}>Relay Network Activity:</Text>
+          <View style={styles.statsRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statNum}>{relayStats.totalForwarded}</Text>
+              <Text style={styles.statLabel}>Forwarded</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statNum}>{relayStats.totalReceived}</Text>
+              <Text style={styles.statLabel}>Received</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statNum}>{relayStats.totalDropped}</Text>
+              <Text style={styles.statLabel}>Filtered / Dropped</Text>
+            </View>
+          </View>
+        </View>
 
         {/* Server Gateway & Network Settings */}
         <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
@@ -484,6 +596,108 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 17,
     flex: 1,
+  },
+  relayToggleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  nodeIdBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceSubtle,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginTop: spacing.xs,
+  },
+  nodeIdLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.textTertiary,
+    letterSpacing: 0.5,
+  },
+  nodeIdValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginTop: 2,
+  },
+  privacyBadge: {
+    backgroundColor: colors.successLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+  },
+  privacyBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.successDark,
+  },
+  nodeIdExplanation: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  hopsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 4,
+  },
+  hopPill: {
+    flex: 1,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
+  hopPillActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  hopPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  hopPillTextActive: {
+    color: colors.textInverse,
+  },
+  hopsExplanation: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 4,
+    lineHeight: 15,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: 4,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: colors.surfaceSubtle,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+  },
+  statNum: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  statLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginTop: 2,
+    textAlign: 'center',
   },
 });
 

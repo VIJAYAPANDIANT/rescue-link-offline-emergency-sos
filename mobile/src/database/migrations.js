@@ -95,6 +95,45 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 3,
+    description: 'Add multi-device relay routing columns to alerts and create relay_history table',
+    up: async (db) => {
+      // 1. Add relay routing fields to alerts table
+      await db.execAsync(`
+        ALTER TABLE alerts ADD COLUMN hopCount INTEGER DEFAULT 0;
+        ALTER TABLE alerts ADD COLUMN maxHops INTEGER DEFAULT 3;
+        ALTER TABLE alerts ADD COLUMN forwarderId TEXT;
+        ALTER TABLE alerts ADD COLUMN originalSenderId TEXT;
+        ALTER TABLE alerts ADD COLUMN expiresAt TEXT;
+        ALTER TABLE alerts ADD COLUMN relayStatus TEXT DEFAULT 'none';
+        ALTER TABLE alerts ADD COLUMN lastForwardedAt TEXT;
+        ALTER TABLE alerts ADD COLUMN integrityHash TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_alerts_relay_status ON alerts(relayStatus);
+        CREATE INDEX IF NOT EXISTS idx_alerts_hop_count ON alerts(hopCount);
+      `);
+
+      // 2. Create relay_history table for auditing all relay received/forwarded/dropped events
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS relay_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          alertId TEXT NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('RECEIVED', 'FORWARDED', 'DROPPED')),
+          hopCount INTEGER NOT NULL DEFAULT 0,
+          forwarderId TEXT,
+          previousHopId TEXT,
+          statusReason TEXT,
+          timestamp TEXT NOT NULL,
+          metadata TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_relay_history_alert_id ON relay_history(alertId);
+        CREATE INDEX IF NOT EXISTS idx_relay_history_action ON relay_history(action);
+        CREATE INDEX IF NOT EXISTS idx_relay_history_timestamp ON relay_history(timestamp DESC);
+      `);
+    },
+  },
 ];
 
 /**
