@@ -423,14 +423,14 @@ graph TD
 
 ---
 
-## 10. Comprehensive Automated Test Matrix (57 Tests)
+## 10. Comprehensive Automated Test Matrix (59 Tests)
 
-The test runner (`tests/run-all-tests.mjs`) exercises all 9 core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
+The test runner (`tests/run-all-tests.mjs`) exercises all core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
 
 1. **Module 1**: Authentication, JWT & Security (6 tests)
 2. **Module 2**: Emergency Alert REST API & Validation (5 tests)
 3. **Module 3**: BLE Protocol & Sanitization (3 tests)
-4. **Module 4**: SQLite Offline Persistence & Migrations v1–v4 (4 tests)
+4. **Module 4**: SQLite Offline Persistence & Migrations v1–v5 (4 tests)
 5. **Module 5**: Offline Outbox & Cloud Synchronization (7 tests)
 6. **Module 6**: Multi-Device SOS Relay Network (10 tests)
 7. **Module 7**: Emergency Contact Management & SOS Notifications (9 tests)
@@ -443,3 +443,37 @@ The test runner (`tests/run-all-tests.mjs`) exercises all 9 core subsystems in p
    - `Admin User Management & Status`: Admin suspends user account, immediately blocking login (`403 ACCOUNT_SUSPENDED`); self-suspension is guarded and rejected
    - `Relay Telemetry Monitoring`: Accurately reports hop metrics, unique forwarder nodes, and hop count distributions
    - `Notification Monitoring`: Reports delivery states (queued, sending, sent, delivered, failed) and strictly masks recipient details (e.g. `a***n@example.com`, `+1***890`)
+10. **Module 10 (Step 12)**: Production Hardening & Readiness Verification (2 tests)
+   - `Security & Headers`: Backend enforces HTTP security headers (`nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`) and sliding window rate limit headers (`X-RateLimit-*`)
+   - `Readiness Probe`: `GET /api/ready` validates directory and file access across all 5 JSON stores and returns heap memory stats
+
+---
+
+## 11. Production Hardening & Operational Resilience (Step 12)
+
+### 11.1 Defense-in-Depth Security Architecture
+```mermaid
+flowchart TD
+    Client["Client Request (Mobile / Admin Web)"] --> Headers["Security Headers & Frame Guards<br/>(nosniff, X-Frame-Options, XSS-Protection)"]
+    Headers --> RateLimit["Sliding Window Token Bucket Rate Limiter<br/>• Global: 300 req/min per IP<br/>• Auth: 30 req/15min per IP"]
+    RateLimit --> BodyLimit["Request Size Guard<br/>(express.json: 1MB limit)"]
+    BodyLimit --> AuthMiddleware["JWT & Role Authorization<br/>(Bearer Token Check, 7-day TTL)"]
+    AuthMiddleware --> InputValidation["Strict Schema & Parameter Validation<br/>(Zero SQL / Command Injection)"]
+    InputValidation --> CoreLogic["Controller Execution & Storage Mutex"]
+    CoreLogic --> Storage[("Atomic JSON Stores / SQLite WAL")]
+    CoreLogic --> Masking["Response Sanitization & Privacy Masking"]
+    Masking --> SafeResponse["Sanitized JSON Response"]
+```
+
+### 11.2 Environment Startup Validation
+During server initialization (`server/config/env.js`), the runtime validates:
+- `PORT`: Valid positive integer between 1024 and 65535.
+- `JWT_SECRET`: Minimum 32-character high-entropy secret; halts startup in `production` if defaults or weak strings are detected.
+- `CORS_ORIGIN`: Configured to explicit origins in production environments.
+
+### 11.3 Health & Readiness Probes
+- `GET /api/health`: High-speed liveness check returning process status, uptime, and timestamp. Exempted from rate limiting for zero-overhead load balancer health polling.
+- `GET /api/ready`: Comprehensive operational readiness check validating read and write filesystem permissions on `users.json`, `alerts.json`, `contacts.json`, `notifications.json`, and `audit_logs.json`, alongside live process RSS and V8 heap memory statistics.
+
+### 11.4 Graceful Shutdown Engine
+Handles `SIGTERM` and `SIGINT` signals with a 10-second drain window, closing active keep-alive HTTP connections and pending storage write locks before terminating the process cleanly without data corruption.

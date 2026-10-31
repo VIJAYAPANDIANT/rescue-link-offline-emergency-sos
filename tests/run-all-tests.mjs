@@ -123,7 +123,7 @@ function stopEphemeralServer() {
 
 async function runComprehensiveTestSuite() {
   console.log('================================================================');
-  console.log('   RESCUELINK STEP 11 COMPREHENSIVE AUTOMATED TEST SUITE');
+  console.log('   RESCUELINK STEP 12 COMPREHENSIVE PRODUCTION VERIFICATION SUITE');
   console.log('================================================================\n');
 
   let totalPassed = 0;
@@ -285,6 +285,34 @@ async function runComprehensiveTestSuite() {
       assert.strictEqual(res3.status, 401);
       const d3 = await res3.json();
       assert.strictEqual(d3.error.code, 'TOKEN_EXPIRED');
+    });
+
+    await runTest('Security & Headers: Backend enforces HTTP security headers and rate limit tracking headers', async () => {
+      // 1. Verify HTTP security headers on health probe
+      const resHealth = await fetch(`${testServerBaseUrl}/health`);
+      assert.strictEqual(resHealth.status, 200);
+      assert.strictEqual(resHealth.headers.get('x-content-type-options'), 'nosniff');
+      assert.strictEqual(resHealth.headers.get('x-frame-options'), 'DENY');
+      assert.strictEqual(resHealth.headers.get('x-xss-protection'), '1; mode=block');
+
+      // 2. Verify Rate Limiting tracking headers on protected API routes
+      const resApi = await fetch(`${testServerBaseUrl}/alerts`, {
+        headers: { Authorization: `Bearer ${testUserToken}` },
+      });
+      assert.ok(resApi.headers.get('x-ratelimit-limit'), 'Must include X-RateLimit-Limit');
+      assert.ok(resApi.headers.get('x-ratelimit-remaining'), 'Must include X-RateLimit-Remaining');
+    });
+
+    await runTest('Readiness Probe: GET /api/ready verifies storage health, data stores, and memory stats', async () => {
+      const res = await fetch(`${testServerBaseUrl}/ready`);
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.success, true);
+      assert.strictEqual(data.status, 'ready');
+      assert.strictEqual(data.checks.storageDirectory, true);
+      assert.ok(data.checks.dataStores);
+      assert.ok(data.checks.memoryStats);
+      assert.ok(data.checks.memoryStats.heapUsedMb > 0);
     });
 
     // =========================================================================
@@ -1992,7 +2020,7 @@ async function runComprehensiveTestSuite() {
   console.log('================================================================\n');
 
   if (totalPassed === totalTests) {
-    console.log('✅ ALL STEP 11 COMPREHENSIVE TESTS PASSED SUCCESSFULLY!\n');
+    console.log('✅ ALL STEP 12 COMPREHENSIVE PRODUCTION TESTS PASSED SUCCESSFULLY!\n');
     process.exit(0);
   } else {
     console.error(`❌ ${totalTests - totalPassed} TEST(S) FAILED.\n`);
