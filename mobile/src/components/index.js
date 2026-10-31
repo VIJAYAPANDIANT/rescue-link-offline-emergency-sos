@@ -3,3 +3,8 @@ export { StatusCard } from './StatusCard';
 export { EmergencyTypeSelector } from './EmergencyTypeSelector';
 export { PrimaryButton } from './PrimaryButton';
 export { EmptyState } from './EmptyState';
+export { StatusBadge } from './StatusBadge';
+export { ConfirmationModal } from './ConfirmationModal';
+export { SearchInput } from './SearchInput';
+export { InfoBanner } from './InfoBanner';
+export { EmergencyMapView } from './EmergencyMapView';

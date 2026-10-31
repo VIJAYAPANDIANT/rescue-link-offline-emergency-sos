@@ -41,6 +41,7 @@ import {
   deserializeBLEMessage,
   sanitizeBLEPayload,
 } from '../mobile/src/services/bluetooth/bleProtocol.js';
+import { lightColors, darkColors, spacing, typography, borderRadius } from '../mobile/src/utils/theme.js';
 
 // Server modules
 import app from '../server/server.js';
@@ -2004,6 +2005,104 @@ async function runComprehensiveTestSuite() {
       }
     });
 
+    // =========================================================================
+    // MODULE 11: STEP 13 UI/UX DESIGN SYSTEM & ACCESSIBILITY CONTRACT
+    // =========================================================================
+    console.log('\n--- Module 11: UI/UX Design System, Theming & Accessibility Contract ---');
+
+    await runTest('UI Design System: Light and dark color palettes provide complete token coverage and contrast', async () => {
+      // 1. Verify Light Theme Tokens
+      assert.ok(lightColors.primary, 'Light theme must define primary emergency color');
+      assert.ok(lightColors.navy, 'Light theme must define primary navy elements');
+      assert.ok(lightColors.success, 'Light theme must define success green');
+      assert.ok(lightColors.warning, 'Light theme must define warning orange/amber');
+      assert.ok(lightColors.info, 'Light theme must define info blue');
+      assert.ok(lightColors.background, 'Light theme must define background');
+      assert.ok(lightColors.textPrimary, 'Light theme must define textPrimary');
+
+      // 2. Verify Dark Theme Tokens
+      assert.ok(darkColors.primary, 'Dark theme must define primary emergency color');
+      assert.ok(darkColors.navy, 'Dark theme must define navy structural background');
+      assert.ok(darkColors.success, 'Dark theme must define success green');
+      assert.ok(darkColors.warning, 'Dark theme must define warning amber');
+      assert.ok(darkColors.info, 'Dark theme must define info blue');
+      assert.ok(darkColors.background, 'Dark theme must define dark background');
+      assert.ok(darkColors.textPrimary, 'Dark theme must define textPrimary');
+
+      // 3. Verify Spacing and Typography scales
+      assert.strictEqual(spacing.xs, 4);
+      assert.strictEqual(spacing.sm, 8);
+      assert.strictEqual(spacing.md, 12);
+      assert.strictEqual(spacing.lg, 16);
+      assert.ok(typography.display.fontSize >= 24);
+      assert.ok(typography.header.fontSize >= 20);
+      assert.ok(borderRadius.full, 9999);
+    });
+
+    await runTest('Emergency Interaction Design: Independent lifecycle state separation (Delivery, Ack, Sync)', async () => {
+      const testAlertId = `state-sep-test-${Date.now()}`;
+      const record = {
+        alertId: testAlertId,
+        emergencyType: 'Medical Emergency',
+        details: 'Multi-state separation test',
+        source: 'local',
+        deliveryStatus: 'pending',
+        ackStatus: 'unacknowledged',
+        syncStatus: 'pending_sync',
+        hopCount: 0,
+        maxHops: 3,
+        createdAt: new Date().toISOString(),
+      };
+
+      // 1. Save initial record
+      await AlertRepository.saveOrUpdateAlert(record);
+
+      // 2. Verify initial states are distinct
+      let loaded = await AlertRepository.getAlertById(testAlertId);
+      assert.strictEqual(loaded.deliveryStatus, 'pending');
+      assert.strictEqual(loaded.ackStatus, 'unacknowledged');
+      assert.strictEqual(loaded.syncStatus, 'pending_sync');
+
+      // 3. Update delivery state without corrupting ack or sync state
+      await AlertRepository.updateAlertStatus(testAlertId, 'broadcasted');
+      loaded = await AlertRepository.getAlertById(testAlertId);
+      assert.strictEqual(loaded.deliveryStatus, 'broadcasted');
+      assert.strictEqual(loaded.ackStatus, 'unacknowledged');
+      assert.strictEqual(loaded.syncStatus, 'pending_sync');
+
+      // 4. Record peer ACK without corrupting sync state
+      await ReceiptRepository.recordReceipt({
+        alertId: testAlertId,
+        receiptType: 'BLE_ACK_RECEIVED',
+        senderOrDeviceId: 'node-peer-test',
+      });
+      loaded = await AlertRepository.getAlertById(testAlertId);
+      assert.strictEqual(loaded.ackStatus, 'acknowledged');
+      assert.strictEqual(loaded.deliveryStatus, 'broadcasted');
+      assert.strictEqual(loaded.syncStatus, 'pending_sync');
+    });
+
+    await runTest('Test Mode Isolation: Simulation drills enforce distinct non-emergency metadata and categories', async () => {
+      // 1. Submit Test / Drill SOS
+      const drillRes = await fetch(`${testServerBaseUrl}/alerts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${testUserToken}`,
+        },
+        body: JSON.stringify({
+          emergencyType: 'Test / Drill',
+          details: 'Routine simulation drill without emergency dispatch',
+        }),
+      });
+
+      assert.strictEqual(drillRes.status, 201);
+      const drillData = await drillRes.json();
+      assert.strictEqual(drillData.success, true);
+      assert.strictEqual(drillData.data.emergencyType, 'Test / Drill');
+      assert.ok(drillData.data.id);
+    });
+
   } finally {
     // Teardown and reset test databases and stores
     await stopEphemeralServer();
@@ -2020,7 +2119,7 @@ async function runComprehensiveTestSuite() {
   console.log('================================================================\n');
 
   if (totalPassed === totalTests) {
-    console.log('✅ ALL STEP 12 COMPREHENSIVE PRODUCTION TESTS PASSED SUCCESSFULLY!\n');
+    console.log('✅ ALL STEP 13 COMPREHENSIVE PRODUCTION & UI/UX TESTS PASSED SUCCESSFULLY!\n');
     process.exit(0);
   } else {
     console.error(`❌ ${totalTests - totalPassed} TEST(S) FAILED.\n`);

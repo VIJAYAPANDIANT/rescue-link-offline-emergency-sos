@@ -5,33 +5,49 @@ import {
   View,
   ScrollView,
   SafeAreaView,
-  Platform,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Switch,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { apiClient } from '../services/api/apiClient';
 import { relaySettings } from '../services/relay/relaySettings';
 import { RelayRepository } from '../database';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { EmptyState } from '../components/EmptyState';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
-import { formatTimestamp } from '../utils/helpers';
+import { ConfirmationModal } from '../components/ConfirmationModal';
+import { InfoBanner } from '../components/InfoBanner';
+import { spacing, borderRadius, typography, shadows } from '../utils/theme';
 
+/**
+ * ProfileScreen (Settings & Operational Configuration)
+ *
+ * Professional responder configuration center:
+ * 1. User Profile & Role Authorization
+ * 2. Visual Theme Customization (Light, Dark, System)
+ * 3. Bluetooth Mesh Relay Settings (Hops limit, node ID, stats)
+ * 4. Privacy & Location Consent Settings
+ * 5. Dynamic Cloud Gateway Endpoint Diagnostics
+ * 6. Guarded Session Sign-Out
+ */
 export const ProfileScreen = ({ navigation }) => {
   const { user, token, isAuthenticated, logout } = useAuth();
+  const { colors, isDark, mode, setMode } = useTheme();
+
+  // Gateway state
   const [serverUrlInput, setServerUrlInput] = useState(apiClient.getBaseUrl());
   const [isTestingGateway, setIsTestingGateway] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState(null);
 
-  // Step 8: Multi-Device Mesh Relay State
+  // Mesh Relay state
   const [relayEnabled, setRelayEnabled] = useState(relaySettings.isRelayEnabled());
   const [maxHops, setMaxHops] = useState(relaySettings.getMaxHops());
   const [nodeId, setNodeId] = useState(relaySettings.getNodeId());
   const [relayStats, setRelayStats] = useState({ totalReceived: 0, totalForwarded: 0, totalDropped: 0 });
+
+  // Logout modal state
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   useEffect(() => {
     const loadRelayData = async () => {
@@ -42,9 +58,9 @@ export const ProfileScreen = ({ navigation }) => {
 
       try {
         const stats = await RelayRepository.getRelayStats();
-        setRelayStats(stats);
-      } catch (e) {
-        // Table not yet migrated or empty
+        setRelayStats(stats || { totalReceived: 0, totalForwarded: 0, totalDropped: 0 });
+      } catch {
+        // Table not yet migrated
       }
     };
     loadRelayData();
@@ -69,7 +85,7 @@ export const ProfileScreen = ({ navigation }) => {
       if (res.success) {
         setGatewayStatus({
           success: true,
-          message: `Reachable! ${res.data?.message || 'Server is online.'}`,
+          message: `Endpoint Verified (HTTP 200). ${res.data?.message || 'Server online.'}`,
         });
       } else {
         setGatewayStatus({
@@ -80,7 +96,7 @@ export const ProfileScreen = ({ navigation }) => {
     } catch (err) {
       setGatewayStatus({
         success: false,
-        message: err.message || 'Connection failed.',
+        message: err.message || 'Connection attempt failed.',
       });
     } finally {
       setIsTestingGateway(false);
@@ -97,298 +113,355 @@ export const ProfileScreen = ({ navigation }) => {
     });
   };
 
+  const themeOptions = [
+    { key: 'system', label: 'System Default', icon: '📱' },
+    { key: 'light', label: 'Light Theme', icon: '☀️' },
+    { key: 'dark', label: 'Dark Navy', icon: '🌙' },
+  ];
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>Responder Profile</Text>
-          <Text style={styles.screenSubtitle}>
-            Cryptographic identity & cloud synchronization settings
+          <Text style={[styles.screenTitle, { color: colors.textPrimary }]}>
+            Settings & Profile
+          </Text>
+          <Text style={[styles.screenSubtitle, { color: colors.textSecondary }]}>
+            Configure mesh routing, visual theme, privacy, and endpoints
           </Text>
         </View>
 
-        {isAuthenticated && user ? (
-          <View style={styles.profileContainer}>
-            {/* User Identity Card */}
-            <View style={[styles.profileCard, shadows.cardElevated]}>
-              <View style={styles.avatarRow}>
-                <View style={styles.avatarCircle}>
-                  <Text style={styles.avatarText}>
-                    {user.name.charAt(0).toUpperCase()}
-                  </Text>
+        {/* Section 1: Responder Profile */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>RESPONDER SESSION</Text>
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.cardBackground,
+              borderColor: colors.border,
+            },
+            shadows.card,
+          ]}
+        >
+          {isAuthenticated && user ? (
+            <View>
+              <View style={styles.profileHeaderRow}>
+                <View style={[styles.avatarCircle, { backgroundColor: colors.surfaceSubtle }]}>
+                  <Text style={styles.avatarIcon}>🛡️</Text>
                 </View>
 
-                <View style={styles.avatarInfo}>
-                  <Text style={styles.userName}>{user.name}</Text>
-                  <Text style={styles.userEmail}>{user.email}</Text>
-                  <View style={styles.jwtBadge}>
-                    <Text style={styles.jwtBadgeText}>AUTHENTICATED VIA JWT</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.userName, { color: colors.textPrimary }]}>{user.name}</Text>
+                  <Text style={[styles.userEmail, { color: colors.textSecondary }]}>{user.email}</Text>
+                  <View style={[styles.roleBadge, { backgroundColor: isDark ? '#172554' : '#EFF6FF', borderColor: colors.infoBorder }]}>
+                    <Text style={[styles.roleBadgeText, { color: colors.infoDark }]}>
+                      ROLE: {(user.role || 'CITIZEN').toUpperCase()}
+                    </Text>
                   </View>
                 </View>
               </View>
 
-              <View style={styles.divider} />
-
-              {/* Account Metadata */}
-              <View style={styles.metadataList}>
-                <View style={styles.metadataRow}>
-                  <Text style={styles.metaLabel}>Responder ID:</Text>
-                  <Text style={styles.metaValue} numberOfLines={1}>
-                    {user.id}
-                  </Text>
-                </View>
-
-                <View style={styles.metadataRow}>
-                  <Text style={styles.metaLabel}>Registered At:</Text>
-                  <Text style={styles.metaValue}>
-                    {formatTimestamp(user.createdAt)}
-                  </Text>
-                </View>
-
-                <View style={styles.metadataRow}>
-                  <Text style={styles.metaLabel}>Auth Mechanism:</Text>
-                  <Text style={styles.metaValue}>JSON Web Token (HMAC SHA-256)</Text>
-                </View>
-
-                <View style={styles.metadataRow}>
-                  <Text style={styles.metaLabel}>Token Payload:</Text>
-                  <Text style={styles.metaValueToken} numberOfLines={2}>
-                    {token ? `${token.substring(0, 32)}...` : 'Active'}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.authNoticeBox}>
-                <Text style={styles.authNoticeText}>
-                  🔒 When offline, your device can still sign local SOS beacons. When online,
-                  your JWT allows seamless relay into the backend emergency ledger.
+              <View style={[styles.tokenBox, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}>
+                <Text style={[styles.tokenLabel, { color: colors.textMuted }]}>AUTH MECHANISM</Text>
+                <Text style={[styles.tokenValue, { color: colors.textPrimary }]}>
+                  JWT Bearer Token (HMAC SHA-256) · 7-day Session
                 </Text>
               </View>
 
               <PrimaryButton
-                title="Log Out of Session"
-                onPress={logout}
+                title="Sign Out of Session"
+                onPress={() => setShowLogoutModal(true)}
                 variant="outline"
                 icon="🚪"
-                style={styles.logoutButton}
+                style={{ marginTop: spacing.md }}
               />
             </View>
-          </View>
-        ) : (
-          <View style={styles.guestContainer}>
-            <EmptyState
-              icon="👤"
-              badgeText="Guest Responder Mode"
-              title="Not Logged In"
-              description="You are currently running RescueLink as a local guest. You can still trigger and compose offline SOS broadcasts, but cloud synchronization requires an authenticated responder account."
-              actionLabel="Sign In with Account"
-              onAction={() => navigation.navigate('Login')}
-            />
-
-            <PrimaryButton
-              title="Create New Responder Profile"
-              onPress={() => navigation.navigate('Register')}
-              variant="primary"
-              icon="📝"
-            />
-          </View>
-        )}
-
-        {/* Step 8: Multi-Device SOS Mesh Relay Settings */}
-        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
-          <View style={styles.relayToggleHeader}>
-            <View style={{ flex: 1, paddingRight: spacing.sm }}>
-              <Text style={styles.cardHeaderTitle}>📡 SOS Mesh Relay Network</Text>
-              <Text style={styles.cardHeaderCaption}>
-                Cooperate in emergency forwarding to help nearby distress beacons reach rescuers.
+          ) : (
+            <View style={styles.guestContainer}>
+              <Text style={styles.guestIcon}>👤</Text>
+              <Text style={[styles.guestTitle, { color: colors.textPrimary }]}>
+                Guest Responder Mode
               </Text>
+              <Text style={[styles.guestDesc, { color: colors.textSecondary }]}>
+                You can create local SOS alerts and broadcast over Bluetooth. Signing in enables automatic cloud synchronization with central emergency servers.
+              </Text>
+              <View style={styles.guestBtnRow}>
+                <PrimaryButton
+                  title="Sign In"
+                  onPress={() => navigation.navigate('Login')}
+                  variant="primary"
+                  style={{ flex: 1, marginRight: spacing.sm }}
+                />
+                <PrimaryButton
+                  title="Register"
+                  onPress={() => navigation.navigate('Register')}
+                  variant="outline"
+                  style={{ flex: 1 }}
+                />
+              </View>
             </View>
-            <Switch
-              value={relayEnabled}
-              onValueChange={handleToggleRelay}
-              trackColor={{ false: colors.border, true: colors.primaryLight }}
-              thumbColor={relayEnabled ? colors.primary : colors.surfaceSubtle}
-            />
-          </View>
+          )}
+        </View>
 
-          {/* Node Identity Box */}
-          <View style={styles.nodeIdBox}>
-            <View>
-              <Text style={styles.nodeIdLabel}>ANONYMOUS MESH NODE ID</Text>
-              <Text style={styles.nodeIdValue}>{nodeId || 'Generating...'}</Text>
-            </View>
-            <View style={styles.privacyBadge}>
-              <Text style={styles.privacyBadgeText}>🔒 PRIVACY PRESERVED</Text>
-            </View>
-          </View>
-          <Text style={styles.nodeIdExplanation}>
-            This randomized identifier routes multi-hop packets without leaking your name, phone, or email.
+        {/* Section 2: Visual Theme Selector */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>VISUAL THEME & ACCESSIBILITY</Text>
+          <Text style={[styles.sectionCaption, { color: colors.textMuted }]}>
+            High-contrast visual styling designed for low-light rescue operations
           </Text>
+        </View>
 
-          <View style={styles.divider} />
-
-          {/* Maximum Hops Selector */}
-          <Text style={styles.inputLabel}>Maximum Relay Hops:</Text>
-          <View style={styles.hopsRow}>
-            {[1, 2, 3, 4, 5].map((h) => {
-              const isSelected = maxHops === h;
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.cardBackground,
+              borderColor: colors.border,
+            },
+            shadows.card,
+          ]}
+        >
+          <View style={styles.themeOptionsRow}>
+            {themeOptions.map((opt) => {
+              const isSel = mode === opt.key;
               return (
                 <TouchableOpacity
-                  key={h}
-                  style={[styles.hopPill, isSelected && styles.hopPillActive]}
-                  onPress={() => handleSelectMaxHops(h)}
-                  activeOpacity={0.7}
+                  key={opt.key}
+                  style={[
+                    styles.themeOptionBtn,
+                    {
+                      backgroundColor: isSel
+                        ? colors.navyDark
+                        : (isDark ? colors.surfaceSubtle : colors.cardBackground),
+                      borderColor: isSel ? colors.navy : colors.borderDark,
+                    },
+                  ]}
+                  onPress={() => setMode(opt.key)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSel }}
+                  accessibilityLabel={opt.label}
                 >
-                  <Text style={[styles.hopPillText, isSelected && styles.hopPillTextActive]}>
-                    {h} Hop{h > 1 ? 's' : ''}
+                  <Text style={styles.themeOptionIcon}>{opt.icon}</Text>
+                  <Text
+                    style={[
+                      styles.themeOptionLabel,
+                      { color: isSel ? '#FFFFFF' : colors.textPrimary, fontWeight: isSel ? '800' : '600' },
+                    ]}
+                  >
+                    {opt.label}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-          <Text style={styles.hopsExplanation}>
-            Controls how many sequential devices may forward an SOS before it halts to prevent network saturation.
+        </View>
+
+        {/* Section 3: Mesh Relay Settings */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>BLUETOOTH LE MESH RELAY</Text>
+          <Text style={[styles.sectionCaption, { color: colors.textMuted }]}>
+            Epidemic multi-hop store-and-forward emergency networking
           </Text>
+        </View>
 
-          <View style={styles.divider} />
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.cardBackground,
+              borderColor: colors.border,
+            },
+            shadows.card,
+          ]}
+        >
+          <View style={styles.relayToggleRow}>
+            <View style={{ flex: 1, marginRight: spacing.sm }}>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+                Participate in Mesh Relay
+              </Text>
+              <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
+                Allows your device to forward encrypted distress beacons from nearby offline survivors.
+              </Text>
+            </View>
 
-          {/* Relay Statistics */}
-          <Text style={styles.inputLabel}>Relay Network Activity:</Text>
-          <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-              <Text style={styles.statNum}>{relayStats.totalForwarded}</Text>
-              <Text style={styles.statLabel}>Forwarded</Text>
+            <Switch
+              value={relayEnabled}
+              onValueChange={handleToggleRelay}
+              trackColor={{ false: colors.borderDark, true: colors.success }}
+              thumbColor="#FFFFFF"
+              accessibilityLabel="Toggle mesh relay participation"
+            />
+          </View>
+
+          <View style={[styles.nodeIdBox, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}>
+            <View>
+              <Text style={[styles.nodeIdLabel, { color: colors.textMuted }]}>ANONYMOUS MESH NODE ID</Text>
+              <Text style={[styles.nodeIdVal, { color: colors.textPrimary }]}>{nodeId || 'node-local'}</Text>
             </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statNum}>{relayStats.totalReceived}</Text>
-              <Text style={styles.statLabel}>Received</Text>
+            <View style={[styles.privacyPill, { backgroundColor: colors.successLight, borderColor: colors.successBorder }]}>
+              <Text style={[styles.privacyPillText, { color: colors.successDark }]}>🔒 ANONYMIZED</Text>
             </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statNum}>{relayStats.totalDropped}</Text>
-              <Text style={styles.statLabel}>Filtered / Dropped</Text>
+          </View>
+
+          {/* Max Hops Stepper */}
+          <View style={styles.hopsSection}>
+            <Text style={[styles.hopsLabel, { color: colors.textSecondary }]}>
+              MAXIMUM RELAY HOP LIMIT (1–5)
+            </Text>
+            <View style={styles.hopsRow}>
+              {[1, 2, 3, 4, 5].map((h) => {
+                const isSelected = maxHops === h;
+                return (
+                  <TouchableOpacity
+                    key={h}
+                    style={[
+                      styles.hopBtn,
+                      {
+                        backgroundColor: isSelected
+                          ? colors.navyDark
+                          : (isDark ? colors.surfaceSubtle : colors.cardBackground),
+                        borderColor: isSelected ? colors.navy : colors.borderDark,
+                      },
+                    ]}
+                    onPress={() => handleSelectMaxHops(h)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
+                    accessibilityLabel={`${h} hops`}
+                  >
+                    <Text
+                      style={[
+                        styles.hopBtnText,
+                        { color: isSelected ? '#FFFFFF' : colors.textPrimary, fontWeight: isSelected ? '800' : '600' },
+                      ]}
+                    >
+                      {h} Hop{h > 1 ? 's' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Relay Telemetry Stats */}
+          <View style={[styles.statsRow, { borderTopColor: colors.border }]}>
+            <View style={styles.statCol}>
+              <Text style={[styles.statVal, { color: colors.info }]}>{relayStats.totalReceived || 0}</Text>
+              <Text style={[styles.statKey, { color: colors.textMuted }]}>Received</Text>
+            </View>
+            <View style={styles.statCol}>
+              <Text style={[styles.statVal, { color: colors.success }]}>{relayStats.totalForwarded || 0}</Text>
+              <Text style={[styles.statKey, { color: colors.textMuted }]}>Forwarded</Text>
+            </View>
+            <View style={styles.statCol}>
+              <Text style={[styles.statVal, { color: colors.textMuted }]}>{relayStats.totalDropped || 0}</Text>
+              <Text style={[styles.statKey, { color: colors.textMuted }]}>Loop Discards</Text>
             </View>
           </View>
         </View>
 
-        {/* Emergency Contacts & Notifications Section */}
-        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
-          <Text style={styles.cardHeaderTitle}>🚨 Emergency Contacts & SOS Alerts</Text>
-          <Text style={styles.cardHeaderCaption}>
-            Manage trusted emergency contacts and review multi-channel (Email / SMS) delivery status.
+        {/* Section 4: Cloud Gateway Diagnostics */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>CLOUD GATEWAY ENDPOINT</Text>
+          <Text style={[styles.sectionCaption, { color: colors.textMuted }]}>
+            Configurable server URL for local drills or field command posts
           </Text>
-
-          <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-            <PrimaryButton
-              title="Open Live Incident Map"
-              onPress={() => navigation.navigate('LiveMap')}
-              variant="primary"
-              icon="🗺️"
-            />
-            <PrimaryButton
-              title="Manage Emergency Contacts"
-              onPress={() => navigation.navigate('Contacts')}
-              variant="outline"
-              icon="👥"
-            />
-            <PrimaryButton
-              title="View SOS Notification Logs"
-              onPress={() => navigation.navigate('NotificationHistory')}
-              variant="outline"
-              icon="🔔"
-            />
-          </View>
         </View>
 
-        {/* Server Gateway & Network Settings */}
-        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
-          <Text style={styles.cardHeaderTitle}>🌐 Server Gateway Configuration</Text>
-          <Text style={styles.cardHeaderCaption}>
-            Configure the Express backend API address for Android emulators, physical devices, or LAN testing.
-          </Text>
-
-          <Text style={styles.inputLabel}>Backend API Base URL:</Text>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.cardBackground,
+              borderColor: colors.border,
+            },
+            shadows.card,
+          ]}
+        >
           <TextInput
-            style={styles.gatewayInput}
+            style={[
+              styles.urlInput,
+              {
+                backgroundColor: colors.surfaceSubtle,
+                borderColor: colors.borderDark,
+                color: colors.textPrimary,
+              },
+            ]}
             value={serverUrlInput}
             onChangeText={setServerUrlInput}
-            placeholder="http://192.168.1.X:5000/api"
+            placeholder="http://localhost:5000/api"
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
+            accessibilityLabel="Gateway server URL"
           />
 
-          <View style={styles.gatewayButtonRow}>
-            <TouchableOpacity
-              style={[styles.gatewayTestBtn, isTestingGateway && styles.btnDisabled]}
+          <View style={styles.gatewayActionsRow}>
+            <PrimaryButton
+              title={isTestingGateway ? 'Testing...' : 'Test Connection'}
               onPress={handleTestGateway}
-              disabled={isTestingGateway}
-              activeOpacity={0.8}
-            >
-              {isTestingGateway ? (
-                <ActivityIndicator size="small" color={colors.textInverse} />
-              ) : (
-                <Text style={styles.gatewayTestBtnText}>Test Connection</Text>
-              )}
-            </TouchableOpacity>
+              variant="primary"
+              loading={isTestingGateway}
+              icon="⚡"
+              size="sm"
+              style={{ flex: 1.5, marginRight: spacing.sm }}
+            />
 
-            <TouchableOpacity
-              style={styles.gatewayResetBtn}
+            <PrimaryButton
+              title="Reset Default"
               onPress={handleResetGateway}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.gatewayResetBtnText}>Reset Default</Text>
-            </TouchableOpacity>
+              variant="outline"
+              size="sm"
+              style={{ flex: 1 }}
+            />
           </View>
 
-          {gatewayStatus && (
+          {gatewayStatus ? (
             <View
               style={[
                 styles.gatewayStatusBox,
-                gatewayStatus.success ? styles.statusSuccess : styles.statusError,
+                {
+                  backgroundColor: gatewayStatus.success
+                    ? (isDark ? '#052E16' : '#DCFCE7')
+                    : (isDark ? '#450A0A' : '#FEE2E2'),
+                  borderColor: gatewayStatus.success
+                    ? (isDark ? '#15803D' : '#86EFAC')
+                    : (isDark ? '#B91C1C' : '#FCA5A5'),
+                },
               ]}
             >
-              <Text style={styles.gatewayStatusText}>
-                {gatewayStatus.success ? '✅ ' : '⚠️ '}
-                {gatewayStatus.message}
+              <Text
+                style={[
+                  styles.gatewayStatusText,
+                  { color: gatewayStatus.success ? (isDark ? '#4ADE80' : '#15803D') : (isDark ? '#F87171' : '#B91C1C') },
+                ]}
+              >
+                {gatewayStatus.success ? '✓' : '⚠️'} {gatewayStatus.message}
               </Text>
             </View>
-          )}
+          ) : null}
         </View>
 
-        {/* Security & Protocol Safeguards */}
-        <View style={[styles.profileCard, shadows.card, { marginTop: spacing.md }]}>
-          <Text style={styles.cardHeaderTitle}>🛡️ Security & Privacy Safeguards</Text>
-          <View style={styles.securityItem}>
-            <Text style={styles.securityBullet}>•</Text>
-            <Text style={styles.securityText}>
-              <Text style={{ fontWeight: '700' }}>Credential Isolation:</Text> Passwords, bcrypt hashes, and JWT tokens are strictly stripped and never transmitted over Bluetooth Low Energy.
-            </Text>
-          </View>
-          <View style={styles.securityItem}>
-            <Text style={styles.securityBullet}>•</Text>
-            <Text style={styles.securityText}>
-              <Text style={{ fontWeight: '700' }}>Relay Integrity:</Text> Peer distress alerts relayed via Bluetooth are tagged as <Text style={{ fontStyle: 'italic' }}>bluetooth_relay</Text>, recording the authenticated relaying node without forging sender identity.
-            </Text>
-          </View>
-          <View style={styles.securityItem}>
-            <Text style={styles.securityBullet}>•</Text>
-            <Text style={styles.securityText}>
-              <Text style={{ fontWeight: '700' }}>Payload Boundaries:</Text> BLE packets are validated against a 512-byte MTU limit to prevent buffer overruns and packet fragmentation.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.actionContainer}>
-          <PrimaryButton
-            title="Return to Dashboard"
-            onPress={() => navigation.navigate('Home')}
-            variant="outline"
-          />
-        </View>
+        {/* Logout Confirmation Modal */}
+        <ConfirmationModal
+          visible={showLogoutModal}
+          title="Sign Out of RescueLink"
+          severity="warning"
+          message="Signing out revokes your local JWT authorization token. Offline local SOS features will remain active in guest mode."
+          confirmLabel="Sign Out"
+          cancelLabel="Stay Logged In"
+          onConfirm={async () => {
+            setShowLogoutModal(false);
+            await logout();
+          }}
+          onCancel={() => setShowLogoutModal(false)}
+        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -397,336 +470,246 @@ export const ProfileScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxl,
   },
   header: {
-    marginBottom: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
   screenTitle: {
-    fontSize: 24,
+    ...typography.header,
     fontWeight: '800',
-    color: colors.textPrimary,
   },
   screenSubtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
     marginTop: 2,
   },
-  profileContainer: {
-    marginVertical: spacing.sm,
+  sectionHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xs,
   },
-  profileCard: {
-    backgroundColor: colors.cardBackground,
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  sectionCaption: {
+    ...typography.caption,
+    marginTop: 2,
+  },
+  card: {
+    marginHorizontal: spacing.lg,
     borderRadius: borderRadius.lg,
-    padding: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.md,
   },
-  avatarRow: {
+  profileHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: spacing.md,
   },
   avatarCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
+    alignItems: 'center',
     marginRight: spacing.md,
   },
-  avatarText: {
+  avatarIcon: {
     fontSize: 24,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  avatarInfo: {
-    flex: 1,
   },
   userName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    ...typography.cardTitle,
+    fontWeight: '800',
   },
   userEmail: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginBottom: 4,
+    ...typography.bodySmall,
+    marginTop: 1,
   },
-  jwtBadge: {
+  roleBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: colors.successLight,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: borderRadius.round,
+    borderRadius: borderRadius.sm,
     borderWidth: 1,
-    borderColor: colors.successBorder,
+    marginTop: 4,
   },
-  jwtBadgeText: {
-    fontSize: 9,
+  roleBadgeText: {
+    fontSize: 10,
     fontWeight: '800',
-    color: colors.successDark,
+    letterSpacing: 0.5,
   },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.sm,
-  },
-  metadataList: {
-    gap: spacing.sm,
-    marginVertical: spacing.sm,
-  },
-  metadataRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  metaLabel: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  metaValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  metaValueToken: {
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    color: colors.infoDark,
-    maxWidth: 200,
-  },
-  authNoticeBox: {
-    backgroundColor: colors.infoLight,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginVertical: spacing.md,
+  tokenBox: {
+    borderRadius: borderRadius.sm,
     borderWidth: 1,
-    borderColor: colors.infoBorder,
+    padding: spacing.sm,
+    marginVertical: spacing.xs,
   },
-  authNoticeText: {
-    fontSize: 11,
-    color: colors.infoDark,
-    lineHeight: 16,
+  tokenLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
-  logoutButton: {
-    marginTop: spacing.xs,
+  tokenValue: {
+    ...typography.caption,
+    fontWeight: '600',
+    marginTop: 2,
   },
   guestContainer: {
-    marginVertical: spacing.sm,
-    gap: spacing.sm,
+    alignItems: 'center',
+    padding: spacing.md,
   },
-  actionContainer: {
-    marginTop: spacing.lg,
+  guestIcon: {
+    fontSize: 32,
+    marginBottom: spacing.xs,
   },
-  cardHeaderTitle: {
-    fontSize: 15,
+  guestTitle: {
+    ...typography.cardTitle,
     fontWeight: '800',
-    color: colors.textPrimary,
     marginBottom: 4,
   },
-  cardHeaderCaption: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 16,
-    marginBottom: spacing.md,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  gatewayInput: {
-    backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    marginBottom: spacing.md,
-  },
-  gatewayButtonRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  gatewayTestBtn: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  gatewayTestBtnText: {
-    color: colors.textInverse,
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  gatewayResetBtn: {
-    backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  gatewayResetBtnText: {
-    color: colors.textSecondary,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
-  gatewayStatusBox: {
-    marginTop: spacing.md,
-    padding: spacing.sm + 2,
-    borderRadius: borderRadius.md,
-    borderWidth: 1,
-  },
-  statusSuccess: {
-    backgroundColor: colors.successLight,
-    borderColor: colors.successBorder,
-  },
-  statusError: {
-    backgroundColor: colors.warningLight,
-    borderColor: colors.warningBorder,
-  },
-  gatewayStatusText: {
-    fontSize: 12,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  securityItem: {
-    flexDirection: 'row',
-    marginTop: spacing.xs,
-    paddingRight: spacing.sm,
-  },
-  securityBullet: {
-    fontSize: 14,
-    color: colors.primary,
-    marginRight: 6,
+  guestDesc: {
+    ...typography.bodySmall,
+    textAlign: 'center',
     lineHeight: 18,
+    marginBottom: spacing.md,
   },
-  securityText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 17,
+  guestBtnRow: {
+    flexDirection: 'row',
+    width: '100%',
+  },
+  themeOptionsRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  themeOptionBtn: {
     flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  relayToggleHeader: {
+  themeOptionIcon: {
+    fontSize: 20,
+    marginBottom: 4,
+  },
+  themeOptionLabel: {
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  relayToggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  cardTitle: {
+    ...typography.cardTitle,
+    fontWeight: '700',
+  },
+  cardDesc: {
+    ...typography.caption,
+    marginTop: 2,
+    lineHeight: 16,
   },
   nodeIdBox: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: colors.surfaceSubtle,
     padding: spacing.sm,
     borderRadius: borderRadius.sm,
-    marginTop: spacing.xs,
+    borderWidth: 1,
+    marginBottom: spacing.md,
   },
   nodeIdLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
-    color: colors.textTertiary,
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
-  nodeIdValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  nodeIdVal: {
+    ...typography.bodySmallBold,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     marginTop: 2,
   },
-  privacyBadge: {
-    backgroundColor: colors.successLight,
+  privacyPill: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: borderRadius.sm,
+    borderWidth: 1,
   },
-  privacyBadgeText: {
+  privacyPillText: {
     fontSize: 9,
     fontWeight: '800',
-    color: colors.successDark,
+    letterSpacing: 0.5,
   },
-  nodeIdExplanation: {
+  hopsSection: {
+    marginBottom: spacing.md,
+  },
+  hopsLabel: {
     fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 4,
-    lineHeight: 15,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    marginBottom: spacing.xs,
   },
   hopsRow: {
     flexDirection: 'row',
-    gap: 6,
-    marginTop: 4,
+    gap: spacing.xs,
   },
-  hopPill: {
+  hopBtn: {
     flex: 1,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingVertical: spacing.sm,
     borderRadius: borderRadius.sm,
+    borderWidth: 1,
     alignItems: 'center',
-    backgroundColor: colors.background,
+    justifyContent: 'center',
   },
-  hopPillActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  hopPillText: {
+  hopBtnText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  hopPillTextActive: {
-    color: colors.textInverse,
-  },
-  hopsExplanation: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 4,
-    lineHeight: 15,
   },
   statsRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: 4,
+    justifyContent: 'space-around',
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
   },
-  statBox: {
-    flex: 1,
-    backgroundColor: colors.surfaceSubtle,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.xs,
-    borderRadius: borderRadius.sm,
+  statCol: {
     alignItems: 'center',
   },
-  statNum: {
-    fontSize: 16,
+  statVal: {
+    fontSize: 18,
     fontWeight: '800',
-    color: colors.primary,
   },
-  statLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textSecondary,
+  statKey: {
+    ...typography.caption,
     marginTop: 2,
-    textAlign: 'center',
+  },
+  urlInput: {
+    height: 46,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    ...typography.bodySmallBold,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginBottom: spacing.sm,
+  },
+  gatewayActionsRow: {
+    flexDirection: 'row',
+  },
+  gatewayStatusBox: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+  },
+  gatewayStatusText: {
+    ...typography.caption,
+    fontWeight: '700',
   },
 });
 

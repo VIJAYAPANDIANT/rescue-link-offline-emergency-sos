@@ -5,40 +5,42 @@ import {
   View,
   ScrollView,
   SafeAreaView,
-  Platform,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
 } from 'react-native';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
-import { AlertRepository, ReceiptRepository, SyncQueueRepository } from '../database';
+import { ReceiptRepository } from '../database';
 import { relayService } from '../services/relay/relayService';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { StatusCard } from '../components/StatusCard';
+import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
-import { formatCoordinates, formatTimestamp } from '../utils/helpers';
+import { InfoBanner } from '../components/InfoBanner';
+import { spacing, borderRadius, typography, shadows } from '../utils/theme';
+import { formatTimestamp } from '../utils/helpers';
 
 /**
- * NearbyDevicesScreen (BLE Central / Receiver Workflow)
+ * NearbyDevicesScreen (BLE Central Receiver & Mesh Ingestion)
  *
- * Implements:
- * 1. Scanning for nearby RescueLink SOS peripheral broadcasters.
- * 2. Real discovered device list with RSSI signal metrics (no fake devices).
- * 3. Connecting to a selected sender node over GATT.
- * 4. Reading and validating the SOS distress message offline (without internet).
- * 5. Displaying distress details with offline security disclaimer and duplicate checking.
- * 6. Transmitting genuine acknowledgment over BLE (GATT write confirmation).
- * 7. Disconnecting and clean teardown on unmount.
+ * Professional mesh peer discovery & reception flow:
+ * 1. Bluetooth radio readiness check with permission guidance
+ * 2. Active scanning with RSSI signal indicators and timeout controls
+ * 3. GATT connection & SOS payload decoding
+ * 4. Two-way BLE acknowledgment (ACK) reply
+ * 5. Multi-device mesh relay forwarding
  */
 export const NearbyDevicesScreen = ({ navigation }) => {
   const { user } = useAuth();
+  const { colors, isDark } = useTheme();
 
   // BLE Hardware State
-  const [hardwareStatus, setHardwareStatus] = useState('Checking BLE interface...');
+  const [hardwareStatus, setHardwareStatus] = useState('Checking BLE radio...');
   const [hardwareVariant, setHardwareVariant] = useState('info');
   const [isBleReady, setIsBleReady] = useState(false);
+  const [permissionMissing, setPermissionMissing] = useState(false);
 
   // Scan State
   const [isScanning, setIsScanning] = useState(false);
@@ -56,11 +58,10 @@ export const NearbyDevicesScreen = ({ navigation }) => {
   const [ackData, setAckData] = useState(null);
   const [isAcknowledging, setIsAcknowledging] = useState(false);
 
-  // Step 8: Multi-Device Relay State
+  // Relay State
   const [isForwardingRelay, setIsForwardingRelay] = useState(false);
   const [relayForwardStatus, setRelayForwardStatus] = useState(null);
 
-  // References for unmount cleanup
   const activeDeviceRef = useRef(null);
   const isScanningRef = useRef(false);
 
@@ -72,11 +73,9 @@ export const NearbyDevicesScreen = ({ navigation }) => {
     isScanningRef.current = isScanning;
   }, [isScanning]);
 
-  // Check BLE stack readiness on mount
   useEffect(() => {
     checkBLEAvailability();
 
-    // Clean up scans and connections on unmount
     return () => {
       if (isScanningRef.current) {
         bluetoothService.stopScanning();
@@ -88,26 +87,38 @@ export const NearbyDevicesScreen = ({ navigation }) => {
   }, []);
 
   const checkBLEAvailability = async () => {
-    const result = await bluetoothService.checkBluetoothAvailability();
-    if (result.supported) {
-      if (result.state === BLE_STATES.IDLE) {
-        setHardwareStatus('BLE Ready (Powered On)');
-        setHardwareVariant('success');
-        setIsBleReady(true);
+    try {
+      const result = await bluetoothService.checkBluetoothAvailability();
+      if (result.supported) {
+        if (result.state === BLE_STATES.IDLE || result.state === 'PoweredOn') {
+          setHardwareStatus('BLE Ready (Powered On)');
+          setHardwareVariant('success');
+          setIsBleReady(true);
+          setPermissionMissing(false);
+        } else if (result.state === BLE_STATES.PERMISSION_REQUIRED) {
+          setHardwareStatus('Permissions Required');
+          setHardwareVariant('warning');
+          setIsBleReady(false);
+          setPermissionMissing(true);
+          setScanMessage('Android requires Nearby Devices & Location permissions for BLE scanning.');
+        } else {
+          setHardwareStatus('Bluetooth Disabled');
+          setHardwareVariant('warning');
+          setIsBleReady(false);
+          setScanMessage('Please enable Bluetooth in your device settings.');
+        }
       } else {
-        setHardwareStatus('Bluetooth Disabled');
-        setHardwareVariant('warning');
+        setHardwareStatus('Native BLE Module Required');
+        setHardwareVariant('info');
         setIsBleReady(false);
-        setScanMessage('Please enable Bluetooth in your device settings.');
+        setScanMessage(
+          result.message || 'Native BLE scanning requires an Expo Development Client build (npx expo run:android).'
+        );
       }
-    } else {
-      setHardwareStatus(result.message || 'BLE Native Module Unavailable');
-      setHardwareVariant('danger');
-      setIsBleReady(false);
-      setScanMessage(
-        result.message ||
-          'Native BLE requires an Expo Development Build (npx expo run:android). Not supported in Expo Go.'
-      );
+    } catch {
+      setHardwareStatus('BLE Standby');
+      setHardwareVariant('info');
+      setIsBleReady(true);
     }
   };
 
@@ -143,15 +154,12 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       setIsScanning(false);
       setScanMessage(result.error || 'Failed to start BLE scan.');
       if (result.state === BLE_STATES.PERMISSION_REQUIRED) {
-        Alert.alert(
-          'Bluetooth Permissions Required',
-          'RescueLink needs Bluetooth Scan & Connect permissions to discover nearby SOS alerts. Please grant them in device settings.'
-        );
+        setPermissionMissing(true);
       }
     }
   };
 
-  // Stop BLE Discovery Scan
+  // Stop Scan
   const handleStopScan = () => {
     bluetoothService.stopScanning();
     setIsScanning(false);
@@ -164,11 +172,10 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       setIsConnecting(true);
       setActiveDeviceId(device.id);
       setConnectionState(BLE_STATES.CONNECTING);
-      setScanMessage(`Connecting to ${device.name} (${device.id})...`);
+      setScanMessage(`Connecting to ${device.name || 'RescueLink Node'} (${device.id})...`);
       setAckStatus('none');
       setAckData(null);
 
-      // Stop scanning before connecting
       if (isScanning) {
         bluetoothService.stopScanning();
         setIsScanning(false);
@@ -177,7 +184,6 @@ export const NearbyDevicesScreen = ({ navigation }) => {
       const result = await bluetoothService.connectAndReceiveAlert(
         device.id,
         async (alert) => {
-          // Process alert through Relay Service admission & deduplication pipeline
           try {
             const relayResult = await relayService.processIncomingRelayAlert(
               alert,
@@ -209,469 +215,362 @@ export const NearbyDevicesScreen = ({ navigation }) => {
 
       if (result.success && result.alert) {
         setConnectionState(BLE_STATES.CONNECTED);
-        setScanMessage(`Connected to ${device.name}. Distress alert received!`);
+        setScanMessage(`Connected to ${device.name || 'Peer'}. Distress alert received!`);
       }
     } catch (err) {
-      console.error('[NearbyDevicesScreen] Connect/Read error:', err.message);
       setConnectionState(BLE_STATES.ERROR);
       setScanMessage(`Failed to read SOS alert: ${err.message}`);
-      Alert.alert('Connection Failed', err.message);
     } finally {
       setIsConnecting(false);
     }
   };
 
-  // Step 8: Forward Received SOS Beacon to Nearby Peers over BLE
-  const handleForwardViaRelay = async () => {
-    if (!receivedAlert) return;
-    setIsForwardingRelay(true);
-    setRelayForwardStatus(null);
-
-    try {
-      const res = await relayService.forwardAlert(receivedAlert);
-      if (res.success) {
-        setRelayForwardStatus({
-          success: true,
-          message: `Forwarding active! Relaying distress beacon (Hop ${res.forwardPayload.hopCount} of ${res.forwardPayload.maxHops}).`,
-        });
-        setReceivedAlert((prev) => ({
-          ...prev,
-          relayStatus: 'forwarded',
-          eligibleToForward: false,
-          hopCount: res.forwardPayload.hopCount,
-        }));
-        Alert.alert(
-          '📡 Beacon Forwarded via Mesh Relay',
-          `This emergency alert is now being re-broadcast over Bluetooth Low Energy.\n\nHop: ${res.forwardPayload.hopCount} / ${res.forwardPayload.maxHops}\nForwarder: ${res.forwardPayload.forwarderId}`
-        );
-      } else {
-        setRelayForwardStatus({
-          success: false,
-          message: res.error || 'Failed to forward alert.',
-        });
-        Alert.alert('Relay Forwarding Notice', res.error || 'Unable to forward alert.');
-      }
-    } catch (e) {
-      setRelayForwardStatus({
-        success: false,
-        message: e.message,
-      });
-      Alert.alert('Relay Error', e.message);
-    } finally {
-      setIsForwardingRelay(false);
-    }
-  };
-
-  // Transmit Genuine Acknowledgment over BLE
+  // Transmit Genuine BLE Acknowledgment (ACK)
   const handleSendAcknowledgment = async () => {
-    if (!activeDeviceId || !receivedAlert?.alertId) {
-      Alert.alert('Error', 'No active connection or alert ID to acknowledge.');
-      return;
-    }
+    if (!activeDeviceId || !receivedAlert) return;
 
     try {
       setIsAcknowledging(true);
       setAckStatus('sending');
 
+      const targetAlertId = receivedAlert.alertId || receivedAlert.id;
+      const ackPayload = {
+        alertId: targetAlertId,
+        receiverId: user?.id || 'anonymous_rescuer',
+        receivedAt: new Date().toISOString(),
+      };
+
       const result = await bluetoothService.sendAcknowledgment(
         activeDeviceId,
-        receivedAlert.alertId
+        ackPayload
       );
 
       if (result.success) {
         setAckStatus('acknowledged');
-        setAckData(result.ackData);
+        setAckData(ackPayload);
 
-        // Record confirmed ACK receipt in SQLite and mark alert acknowledged
         try {
           await ReceiptRepository.recordReceipt({
-            alertId: receivedAlert.alertId,
+            alertId: targetAlertId,
             receiptType: 'BLE_ACK_SENT',
             senderOrDeviceId: activeDeviceId,
-            metadata: result.ackData,
+            metadata: ackPayload,
           });
         } catch (dbErr) {
-          console.warn('[NearbyDevicesScreen] SQLite receipt save warning:', dbErr.message);
+          console.warn('[NearbyDevicesScreen] SQLite receipt recording warning:', dbErr.message);
         }
 
         Alert.alert(
-          '✅ Acknowledgment Transmitted',
-          `Genuine BLE ACK successfully written to sender device for Alert ID ${receivedAlert.alertId}.`
+          '✓ Acknowledgment Transmitted',
+          'Your confirmation receipt was written to the sender node over Bluetooth Low Energy.'
         );
+      } else {
+        setAckStatus('failed');
       }
-    } catch (err) {
-      console.error('[NearbyDevicesScreen] ACK error:', err.message);
+    } catch {
       setAckStatus('failed');
-      Alert.alert('Acknowledgment Failed', err.message);
     } finally {
       setIsAcknowledging(false);
     }
   };
 
-  // Disconnect from Active Device
-  const handleDisconnect = async () => {
-    if (activeDeviceId) {
-      await bluetoothService.disconnectDevice(activeDeviceId);
-      setActiveDeviceId(null);
-      setConnectionState(BLE_STATES.DISCONNECTED);
-      setScanMessage('Disconnected from device.');
+  // Forward Alert over Mesh Relay
+  const handleForwardAlert = async () => {
+    if (!receivedAlert || !receivedAlert.eligibleToForward) return;
+
+    try {
+      setIsForwardingRelay(true);
+      setRelayForwardStatus('Forwarding distress beacon over BLE mesh...');
+
+      const forwardResult = await relayService.forwardRelayAlert(
+        receivedAlert,
+        user?.id
+      );
+
+      if (forwardResult.success) {
+        setRelayForwardStatus(`Alert re-broadcasted! Relayed as Hop ${forwardResult.hopCount}`);
+        setReceivedAlert((prev) => ({
+          ...prev,
+          hopCount: forwardResult.hopCount,
+          eligibleToForward: false,
+          relayStatus: 'forwarded',
+        }));
+      } else {
+        setRelayForwardStatus(`Relay suppressed: ${forwardResult.reason}`);
+      }
+    } catch (err) {
+      setRelayForwardStatus(`Relay failed: ${err.message}`);
+    } finally {
+      setIsForwardingRelay(false);
     }
   };
 
-  // Clear current received alert from screen
-  const handleClearAlert = () => {
-    if (activeDeviceId) {
-      bluetoothService.disconnectDevice(activeDeviceId);
-    }
-    setActiveDeviceId(null);
-    setReceivedAlert(null);
-    setAckStatus('none');
-    setAckData(null);
-    setConnectionState(BLE_STATES.IDLE);
-    setScanMessage(null);
+  const getRssiBadge = (rssi) => {
+    if (!rssi) return { text: 'N/A', variant: 'info' };
+    if (rssi > -65) return { text: `${rssi} dBm (Strong)`, variant: 'success' };
+    if (rssi > -80) return { text: `${rssi} dBm (Fair)`, variant: 'warning' };
+    return { text: `${rssi} dBm (Weak)`, variant: 'danger' };
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>Nearby SOS Devices</Text>
-          <Text style={styles.screenSubtitle}>
-            Offline BLE Mesh Receiver · Scan, Connect & Acknowledge
+          <Text style={[styles.screenTitle, { color: colors.textPrimary }]}>
+            Nearby Mesh Peers
+          </Text>
+          <Text style={[styles.screenSubtitle, { color: colors.textSecondary }]}>
+            Discover distress beacons and relay emergency alerts off-grid
           </Text>
         </View>
 
-        {/* Hardware & BLE Status */}
-        <StatusCard
-          title="BLE Hardware Status"
-          value={hardwareStatus}
-          icon="📡"
-          variant={hardwareVariant}
-          subtitle="Real Bluetooth Low Energy Central subsystem"
-        />
-
-        {/* Active Connection Status if connected */}
-        {activeDeviceId ? (
-          <StatusCard
-            title="Connected Sender Node"
-            value={connectionState}
-            icon="🔗"
-            variant={connectionState === BLE_STATES.CONNECTED ? 'success' : 'warning'}
-            subtitle={`Device ID: ${activeDeviceId}`}
+        {/* Permission Guidance Banner */}
+        {permissionMissing ? (
+          <InfoBanner
+            variant="warning"
+            icon="⚠️"
+            title="Bluetooth Permissions Required"
+            message="Android requires 'Nearby Devices' and 'Location' permissions for Bluetooth Low Energy discovery. Coordinates are not tracked; this is an OS security requirement for BLE radio scanning."
+            actionLabel="Review Settings"
+            onAction={checkBLEAvailability}
+            style={{ marginHorizontal: spacing.lg }}
           />
         ) : null}
 
-        {/* Scan Controls */}
-        <View style={styles.controlsRow}>
+        {/* Hardware Status */}
+        <View style={styles.statusSection}>
+          <StatusCard
+            title="Bluetooth Subsystem"
+            value={hardwareStatus}
+            icon="📡"
+            variant={hardwareVariant}
+            subtitle={
+              isScanning
+                ? 'Central scanner actively listening on service UUID 0000FE60...'
+                : 'Central scanner in standby'
+            }
+          />
+        </View>
+
+        {/* Scan Action Controls */}
+        <View style={styles.scanControls}>
           {!isScanning ? (
             <PrimaryButton
-              title="Start BLE Scan"
+              title="Start BLE Discovery Scan"
               onPress={handleStartScan}
               variant="primary"
               icon="🔍"
-              disabled={isConnecting}
+              size="lg"
             />
           ) : (
             <PrimaryButton
-              title="Stop BLE Scan"
+              title="Stop Scanning"
               onPress={handleStopScan}
               variant="secondary"
               icon="⏹️"
+              size="lg"
             />
           )}
-        </View>
 
-        {/* Scan Message / In-progress Indicator */}
-        {scanMessage ? (
-          <View style={styles.statusBox}>
-            {isScanning ? (
-              <ActivityIndicator
-                size="small"
-                color={colors.info}
-                style={{ marginRight: 8 }}
-              />
-            ) : (
-              <Text style={styles.statusEmoji}>ℹ️</Text>
-            )}
-            <Text style={styles.statusBoxText}>{scanMessage}</Text>
-          </View>
-        ) : null}
+          {isScanning ? (
+            <View style={[styles.scanningIndicator, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}>
+              <ActivityIndicator size="small" color={colors.info} style={{ marginRight: 8 }} />
+              <Text style={[styles.scanningText, { color: colors.textPrimary }]}>
+                Scanning BLE spectrum (30s window)...
+              </Text>
+            </View>
+          ) : null}
+
+          {scanMessage && !isScanning ? (
+            <Text style={[styles.scanMessageText, { color: colors.textMuted }]}>
+              {scanMessage}
+            </Text>
+          ) : null}
+        </View>
 
         {/* Received Distress Alert Card */}
         {receivedAlert ? (
-          <View style={[styles.alertCard, shadows.cardElevated]}>
-            <View style={styles.alertCardHeader}>
-              <View style={styles.alertBadgeRow}>
-                <Text style={styles.emergencyBadge}>
-                  🚨 {receivedAlert.emergencyType || 'EMERGENCY'}
-                </Text>
-                {receivedAlert.isDuplicate ? (
-                  <Text style={styles.duplicateBadge}>DUPLICATE ALERT</Text>
-                ) : null}
+          <View
+            style={[
+              styles.receivedAlertCard,
+              {
+                backgroundColor: colors.cardBackground,
+                borderColor: colors.primaryBorder,
+              },
+              shadows.cardElevated,
+            ]}
+          >
+            <View style={styles.receivedAlertHeader}>
+              <View style={styles.receivedAlertTitleRow}>
+                <Text style={styles.alertIcon}>🚨</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.receivedAlertTitle, { color: colors.textPrimary }]}>
+                    Incoming Emergency Distress Beacon
+                  </Text>
+                  <Text style={[styles.receivedAlertSub, { color: colors.textSecondary }]}>
+                    Received via direct BLE GATT characteristic read
+                  </Text>
+                </View>
               </View>
-              <Text style={styles.alertCardTitle}>Incoming SOS Distress Alert</Text>
+
+              <View style={styles.badgeRow}>
+                <StatusBadge type="category" value={receivedAlert.emergencyType} size="sm" />
+                <StatusBadge type="source" value="bluetooth_relay" size="sm" label={`Hop ${receivedAlert.hopCount || 0}`} />
+              </View>
             </View>
 
-            {/* Offline Disclaimer */}
-            <View style={styles.disclaimerBox}>
-              <Text style={styles.disclaimerIcon}>⚠️</Text>
-              <Text style={styles.disclaimerText}>
-                Received directly over nearby Bluetooth. Not verified by a central server.
-              </Text>
-            </View>
-
-            {/* Alert Content Table */}
-            <View style={styles.alertDetailsTable}>
+            <View style={[styles.alertDetailGrid, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}>
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Alert ID:</Text>
-                <Text style={styles.detailValue} selectable>
-                  {receivedAlert.alertId}
+                <Text style={[styles.detailKey, { color: colors.textMuted }]}>Survivor Name</Text>
+                <Text style={[styles.detailVal, { color: colors.textPrimary }]}>
+                  {receivedAlert.senderName || 'Anonymous Survivor'}
                 </Text>
               </View>
 
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Sender Name:</Text>
-                <Text style={styles.detailValueBold}>
-                  {receivedAlert.senderName || 'Anonymous'}
+                <Text style={[styles.detailKey, { color: colors.textMuted }]}>Alert UUID</Text>
+                <Text style={[styles.detailVal, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {receivedAlert.alertId || receivedAlert.id}
                 </Text>
               </View>
 
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Timestamp:</Text>
-                <Text style={styles.detailValue}>
-                  {formatTimestamp(receivedAlert.createdAt)}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>GPS Coordinates:</Text>
-                <Text style={styles.detailValue}>
-                  {typeof receivedAlert.latitude === 'number' &&
-                  typeof receivedAlert.longitude === 'number'
-                    ? formatCoordinates(receivedAlert.latitude, receivedAlert.longitude)
-                    : 'None (Omitted by sender)'}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Mesh Route:</Text>
-                <Text style={styles.detailValueBold}>
-                  {`Hop ${receivedAlert.hopCount || 0} of ${receivedAlert.maxHops || 3} ${
-                    receivedAlert.forwarderId ? `(via ${receivedAlert.forwarderId})` : '(Direct Origin)'
-                  }`}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Integrity:</Text>
-                <Text style={styles.detailValue}>
-                  {receivedAlert.integrityHash ? '✅ Verified (Tamper-Resistant)' : 'Legacy v1 Protocol'}
+                <Text style={[styles.detailKey, { color: colors.textMuted }]}>GPS Coordinates</Text>
+                <Text style={[styles.detailVal, { color: colors.textPrimary }]}>
+                  {receivedAlert.latitude && receivedAlert.longitude
+                    ? `${Number(receivedAlert.latitude).toFixed(4)}°, ${Number(receivedAlert.longitude).toFixed(4)}°`
+                    : 'Omitted (No GPS Attached)'}
                 </Text>
               </View>
 
               {receivedAlert.details ? (
-                <View style={styles.detailsBlock}>
-                  <Text style={styles.detailLabel}>Distress Details:</Text>
-                  <Text style={styles.detailsBlockText}>{receivedAlert.details}</Text>
+                <View style={styles.detailRow}>
+                  <Text style={[styles.detailKey, { color: colors.textMuted }]}>Survivor Message</Text>
+                  <Text style={[styles.detailVal, { color: colors.textPrimary }]} numberOfLines={3}>
+                    {receivedAlert.details}
+                  </Text>
                 </View>
               ) : null}
             </View>
 
-            {/* Acknowledgment Section */}
-            <View style={styles.ackSection}>
-              {ackStatus === 'acknowledged' ? (
-                <View style={styles.ackSuccessCard}>
-                  <Text style={styles.ackSuccessTitle}>✅ Acknowledgment Confirmed</Text>
-                  <Text style={styles.ackSuccessText}>
-                    Genuine BLE ACK sent to sender. Receiver Node ID:{' '}
-                    {ackData?.receiverId || 'Local-Receiver'}
-                  </Text>
-                </View>
-              ) : (
+            {/* Acknowledgment & Relay Action Buttons */}
+            <View style={styles.responseActions}>
+              {ackStatus !== 'acknowledged' ? (
                 <PrimaryButton
-                  title={isAcknowledging ? 'Transmitting ACK...' : 'Acknowledge Receipt over BLE'}
+                  title="Send Peer Confirmation (ACK)"
                   onPress={handleSendAcknowledgment}
                   variant="success"
+                  loading={isAcknowledging}
                   icon="🤝"
-                  disabled={isAcknowledging}
                 />
-              )}
-            </View>
-
-            {/* Step 8: Multi-Device Mesh Relay Section */}
-            <View style={styles.relaySection}>
-              <View style={styles.relayHeaderRow}>
-                <Text style={styles.relaySectionTitle}>📡 Mesh Relay Network</Text>
-                <View
-                  style={[
-                    styles.relayBadge,
-                    receivedAlert.relayStatus === 'forwarded'
-                      ? styles.relayBadgeForwarded
-                      : receivedAlert.eligibleToForward
-                      ? styles.relayBadgeEligible
-                      : styles.relayBadgeStored,
-                  ]}
-                >
-                  <Text style={styles.relayBadgeText}>
-                    {receivedAlert.relayStatus === 'forwarded'
-                      ? 'FORWARDED'
-                      : receivedAlert.eligibleToForward
-                      ? 'ELIGIBLE TO FORWARD'
-                      : 'STORED ONLY'}
-                  </Text>
-                </View>
-              </View>
-
-              {receivedAlert.relayStatus === 'forwarded' ? (
-                <View style={styles.relayActiveCard}>
-                  <Text style={styles.relayActiveTitle}>📡 Active Mesh Relay</Text>
-                  <Text style={styles.relayActiveText}>
-                    This device is actively forwarding this distress beacon as Hop{' '}
-                    {(receivedAlert.hopCount || 0) + 1}. Nearby nodes can now discover and assist.
-                  </Text>
-                </View>
-              ) : receivedAlert.eligibleToForward ? (
-                <View style={styles.relayActionCard}>
-                  <Text style={styles.relayActionDesc}>
-                    Help expand rescue coverage. Forward this SOS beacon over Bluetooth Low Energy to reach responders further away.
-                  </Text>
-                  <PrimaryButton
-                    title={
-                      isForwardingRelay
-                        ? 'Broadcasting Relay...'
-                        : `Forward via BLE Relay (Hop ${(receivedAlert.hopCount || 0) + 1})`
-                    }
-                    onPress={handleForwardViaRelay}
-                    variant="warning"
-                    icon="📡"
-                    disabled={isForwardingRelay}
-                  />
-                </View>
               ) : (
-                <View style={styles.relayNoteCard}>
-                  <Text style={styles.relayNoteText}>
-                    {receivedAlert.relayReason === 'HOP_LIMIT_REACHED'
-                      ? `Hop limit reached (${receivedAlert.hopCount}/${receivedAlert.maxHops}). Alert is preserved in SQLite and queued for cloud sync.`
-                      : receivedAlert.relayReason === 'RELAY_DISABLED'
-                      ? 'Mesh relay forwarding is currently disabled in your Profile Settings.'
-                      : 'Alert is safely stored in local SQLite database for cloud sync.'}
+                <View style={[styles.ackConfirmedBox, { backgroundColor: colors.successLight, borderColor: colors.successBorder }]}>
+                  <Text style={[styles.ackConfirmedText, { color: colors.successDark }]}>
+                    ✓ Peer Acknowledgment Delivered over Bluetooth
                   </Text>
                 </View>
+              )}
+
+              {receivedAlert.eligibleToForward ? (
+                <PrimaryButton
+                  title="Forward over Mesh Relay"
+                  onPress={handleForwardAlert}
+                  variant="navy"
+                  loading={isForwardingRelay}
+                  icon="📡"
+                  style={{ marginTop: spacing.xs }}
+                />
+              ) : (
+                <Text style={[styles.relayReasonText, { color: colors.textMuted }]}>
+                  Mesh relay: {receivedAlert.relayReason || 'Maximum hop depth reached'}
+                </Text>
               )}
 
               {relayForwardStatus ? (
-                <View
-                  style={[
-                    styles.statusNotice,
-                    relayForwardStatus.success
-                      ? styles.statusNoticeSuccess
-                      : styles.statusNoticeWarning,
-                  ]}
-                >
-                  <Text style={styles.statusNoticeText}>{relayForwardStatus.message}</Text>
-                </View>
+                <Text style={[styles.relayStatusReport, { color: colors.infoDark }]}>
+                  {relayForwardStatus}
+                </Text>
               ) : null}
-            </View>
-
-            {/* Alert Actions: Disconnect / Clear */}
-            <View style={styles.alertActionButtons}>
-              <TouchableOpacity
-                style={styles.disconnectBtn}
-                onPress={handleDisconnect}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.disconnectBtnText}>Disconnect Device</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.clearBtn}
-                onPress={handleClearAlert}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.clearBtnText}>Dismiss Alert</Text>
-              </TouchableOpacity>
             </View>
           </View>
         ) : null}
 
-        {/* Discovered Devices List */}
+        {/* Discovered Devices Section */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            DISCOVERED NODES ({discoveredDevices.length})
-          </Text>
-          <Text style={styles.sectionCaption}>
-            Real Bluetooth broadcasters discovered within range
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            DISCOVERED BLUETOOTH PEERS ({discoveredDevices.length})
           </Text>
         </View>
 
-        {discoveredDevices.length === 0 ? (
-          <EmptyState
-            icon="👥"
-            badgeText={isScanning ? 'Scan in Progress' : 'No Devices Found'}
-            title="No Nearby Senders Discovered"
-            description="When another device is advertising an emergency SOS beacon on the Send SOS screen, it will appear here with its signal strength (RSSI)."
-            actionLabel={isScanning ? 'Scanning...' : 'Scan for Devices'}
-            onAction={isScanning ? handleStopScan : handleStartScan}
-          />
-        ) : (
-          <View style={styles.deviceList}>
+        {discoveredDevices.length > 0 ? (
+          <View style={styles.devicesList}>
             {discoveredDevices.map((device) => {
-              const isSelected = activeDeviceId === device.id;
+              const rssiInfo = getRssiBadge(device.rssi);
+              const isCurrent = activeDeviceId === device.id;
+
               return (
                 <View
                   key={device.id}
                   style={[
                     styles.deviceCard,
+                    {
+                      backgroundColor: colors.cardBackground,
+                      borderColor: isCurrent ? colors.info : colors.border,
+                    },
                     shadows.card,
-                    isSelected && styles.deviceCardActive,
                   ]}
                 >
-                  <View style={styles.deviceInfoRow}>
+                  <View style={styles.deviceHeaderRow}>
                     <View style={styles.deviceIconCircle}>
                       <Text style={styles.deviceIcon}>📱</Text>
                     </View>
-                    <View style={styles.deviceDetails}>
-                      <Text style={styles.deviceName}>{device.name}</Text>
-                      <Text style={styles.deviceId} numberOfLines={1}>
+
+                    <View style={{ flex: 1, marginRight: spacing.sm }}>
+                      <Text style={[styles.deviceName, { color: colors.textPrimary }]}>
+                        {device.name || 'RescueLink Peripheral'}
+                      </Text>
+                      <Text style={[styles.deviceMac, { color: colors.textMuted }]}>
                         ID: {device.id}
                       </Text>
-                      <Text style={styles.deviceRssi}>
-                        Signal: {device.rssi ? `${device.rssi} dBm` : 'Unknown'}
-                      </Text>
                     </View>
+
+                    <StatusBadge
+                      type="generic"
+                      value={rssiInfo.text}
+                      size="sm"
+                    />
                   </View>
 
                   <View style={styles.deviceActionRow}>
-                    {isSelected ? (
-                      <View style={styles.connectedBadge}>
-                        <Text style={styles.connectedBadgeText}>● Connected</Text>
-                      </View>
-                    ) : (
-                      <PrimaryButton
-                        title={isConnecting ? 'Connecting...' : 'Connect & Read SOS'}
-                        onPress={() => handleConnectAndReadAlert(device)}
-                        variant="primary"
-                        disabled={isConnecting}
-                      />
-                    )}
+                    <PrimaryButton
+                      title={
+                        isConnecting && isCurrent
+                          ? 'Connecting & Reading...'
+                          : 'Connect & Read Alert'
+                      }
+                      onPress={() => handleConnectAndReadAlert(device)}
+                      variant={isCurrent ? 'navy' : 'primary'}
+                      loading={isConnecting && isCurrent}
+                      icon="📥"
+                      size="sm"
+                    />
                   </View>
                 </View>
               );
             })}
           </View>
-        )}
-
-        {/* Navigation Portal Back */}
-        <View style={styles.footerAction}>
-          <PrimaryButton
-            title="Return to Dashboard"
-            onPress={() => navigation.navigate('Home')}
-            variant="outline"
+        ) : (
+          <EmptyState
+            icon="📡"
+            title="No Nearby Peers Detected"
+            description="Tap 'Start BLE Discovery Scan' to search for active RescueLink emergency beacons within 10–30 meters."
+            style={{ marginHorizontal: spacing.lg }}
           />
-        </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -680,392 +579,170 @@ export const NearbyDevicesScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxl,
   },
   header: {
-    marginBottom: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
   screenTitle: {
-    fontSize: 24,
+    ...typography.header,
     fontWeight: '800',
-    color: colors.textPrimary,
   },
   screenSubtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
     marginTop: 2,
   },
-  controlsRow: {
-    marginVertical: spacing.sm,
+  statusSection: {
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.xs,
   },
-  statusBox: {
+  scanControls: {
+    paddingHorizontal: spacing.lg,
+    marginVertical: spacing.md,
+  },
+  scanningIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.infoLight,
-    borderWidth: 1,
-    borderColor: colors.infoBorder,
+    padding: spacing.sm,
     borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginVertical: spacing.sm,
+    borderWidth: 1,
+    marginTop: spacing.sm,
   },
-  statusEmoji: {
-    fontSize: 16,
-    marginRight: 8,
+  scanningText: {
+    ...typography.bodySmallBold,
   },
-  statusBoxText: {
-    flex: 1,
-    fontSize: 13,
-    color: colors.infoDark,
-    lineHeight: 18,
-    fontWeight: '500',
+  scanMessageText: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginTop: spacing.xs,
   },
   sectionHeader: {
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
   sectionTitle: {
     fontSize: 12,
     fontWeight: '800',
-    color: colors.textSecondary,
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
-  sectionCaption: {
-    fontSize: 11,
-    color: colors.textTertiary,
-    marginTop: 1,
-  },
-  deviceList: {
+  devicesList: {
+    paddingHorizontal: spacing.lg,
     gap: spacing.sm,
   },
   deviceCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
+    borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.md,
   },
-  deviceCardActive: {
-    borderColor: colors.success,
-    backgroundColor: colors.successLight,
-  },
-  deviceInfoRow: {
+  deviceHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: spacing.sm,
   },
   deviceIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surfaceSubtle,
-    alignItems: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
-    marginRight: spacing.md,
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    marginRight: spacing.sm,
   },
   deviceIcon: {
-    fontSize: 22,
-  },
-  deviceDetails: {
-    flex: 1,
+    fontSize: 18,
   },
   deviceName: {
-    fontSize: 16,
+    ...typography.cardTitle,
+    fontSize: 14,
     fontWeight: '700',
-    color: colors.textPrimary,
   },
-  deviceId: {
-    fontSize: 11,
-    color: colors.textTertiary,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  deviceMac: {
+    ...typography.caption,
     marginTop: 1,
-  },
-  deviceRssi: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.infoDark,
-    marginTop: 2,
   },
   deviceActionRow: {
     marginTop: spacing.xs,
   },
-  connectedBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.success,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
-  },
-  connectedBadgeText: {
-    color: colors.textInverse,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  alertCard: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.xl,
+  receivedAlertCard: {
+    marginHorizontal: spacing.lg,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
     padding: spacing.lg,
-    marginVertical: spacing.md,
-    borderWidth: 2,
-    borderColor: colors.primary,
+    marginVertical: spacing.sm,
   },
-  alertCardHeader: {
-    marginBottom: spacing.sm,
+  receivedAlertHeader: {
+    marginBottom: spacing.md,
   },
-  alertBadgeRow: {
+  receivedAlertTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  alertIcon: {
+    fontSize: 24,
+    marginRight: spacing.sm,
+  },
+  receivedAlertTitle: {
+    ...typography.cardTitle,
+    fontWeight: '800',
+  },
+  receivedAlertSub: {
+    ...typography.caption,
+    marginTop: 1,
+  },
+  badgeRow: {
+    flexDirection: 'row',
     gap: spacing.xs,
-    marginBottom: 6,
+    marginTop: spacing.xs,
   },
-  emergencyBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.primaryLight,
-    color: colors.primaryDark,
-    fontSize: 11,
-    fontWeight: '800',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: borderRadius.round,
-    letterSpacing: 0.5,
-  },
-  duplicateBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.warningLight,
-    color: colors.warningDark,
-    fontSize: 11,
-    fontWeight: '800',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: borderRadius.round,
-    letterSpacing: 0.5,
-  },
-  alertCardTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  disclaimerBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.warningLight,
+  alertDetailGrid: {
+    borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.warningBorder,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginVertical: spacing.sm,
-    gap: 6,
-  },
-  disclaimerIcon: {
-    fontSize: 16,
-  },
-  disclaimerText: {
-    flex: 1,
-    fontSize: 11,
-    color: colors.warningDark,
-    fontWeight: '600',
-    lineHeight: 15,
-  },
-  alertDetailsTable: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: borderRadius.md,
     padding: spacing.md,
-    gap: 8,
-    marginVertical: spacing.sm,
+    gap: spacing.xs,
+    marginBottom: spacing.md,
   },
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    width: 100,
+  detailKey: {
+    ...typography.caption,
+    fontWeight: '600',
   },
-  detailValue: {
-    flex: 1,
-    fontSize: 12,
-    color: colors.textPrimary,
+  detailVal: {
+    ...typography.bodySmallBold,
+    maxWidth: '65%',
     textAlign: 'right',
   },
-  detailValueBold: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'right',
+  responseActions: {
+    gap: spacing.xs,
   },
-  detailsBlock: {
-    marginTop: 4,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  detailsBlockText: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    marginTop: 3,
-    lineHeight: 18,
-  },
-  ackSection: {
-    marginTop: spacing.md,
-  },
-  ackSuccessCard: {
-    backgroundColor: colors.successLight,
-    borderWidth: 1,
-    borderColor: colors.successBorder,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-  },
-  ackSuccessTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.successDark,
-    marginBottom: 2,
-  },
-  ackSuccessText: {
-    fontSize: 12,
-    color: colors.successDark,
-    lineHeight: 16,
-  },
-  alertActionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: spacing.md,
-    gap: spacing.sm,
-  },
-  disconnectBtn: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    backgroundColor: colors.cardBackground,
-  },
-  disconnectBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  clearBtn: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    backgroundColor: colors.cardBackground,
-  },
-  clearBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  relaySection: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  relayHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  relaySectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  relayBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  ackConfirmedBox: {
+    padding: spacing.sm,
     borderRadius: borderRadius.sm,
-  },
-  relayBadgeForwarded: {
-    backgroundColor: colors.successLight,
-  },
-  relayBadgeEligible: {
-    backgroundColor: '#FEF3C7',
-  },
-  relayBadgeStored: {
-    backgroundColor: colors.surface,
-  },
-  relayBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  relayActiveCard: {
-    backgroundColor: colors.successLight,
     borderWidth: 1,
-    borderColor: colors.successBorder,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginTop: 4,
+    alignItems: 'center',
   },
-  relayActiveTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.successDark,
+  ackConfirmedText: {
+    ...typography.bodySmallBold,
   },
-  relayActiveText: {
-    fontSize: 11,
-    color: colors.successDark,
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  relayActionCard: {
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginTop: 4,
-  },
-  relayActionDesc: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-    lineHeight: 16,
-  },
-  relayNoteCard: {
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginTop: 4,
-  },
-  relayNoteText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    lineHeight: 15,
-  },
-  statusNotice: {
+  relayReasonText: {
+    ...typography.caption,
+    textAlign: 'center',
     marginTop: spacing.xs,
-    padding: spacing.xs,
-    borderRadius: borderRadius.sm,
   },
-  statusNoticeSuccess: {
-    backgroundColor: colors.successLight,
-  },
-  statusNoticeWarning: {
-    backgroundColor: '#FEF3C7',
-  },
-  statusNoticeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  footerAction: {
-    marginTop: spacing.xl,
+  relayStatusReport: {
+    ...typography.caption,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: spacing.xs,
   },
 });
 

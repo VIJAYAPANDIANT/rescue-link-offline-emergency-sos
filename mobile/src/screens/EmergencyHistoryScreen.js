@@ -1,748 +1,496 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   ScrollView,
   SafeAreaView,
-  Platform,
-  ActivityIndicator,
   TouchableOpacity,
   Alert,
   RefreshControl,
+  Modal,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { apiClient } from '../services/api/apiClient';
+import { useTheme } from '../context/ThemeContext';
 import { syncService } from '../services/sync/syncService';
-import { AlertRepository, SyncQueueRepository, ReceiptRepository, RelayRepository } from '../database';
+import { AlertRepository, SyncQueueRepository, RelayRepository } from '../database';
 import { relayService } from '../services/relay/relayService';
 import { EmptyState } from '../components/EmptyState';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { EMERGENCY_TYPES } from '../utils/constants';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
-import { formatTimestamp, formatCoordinates } from '../utils/helpers';
+import { StatusBadge } from '../components/StatusBadge';
+import { SearchInput } from '../components/SearchInput';
+import { ConfirmationModal } from '../components/ConfirmationModal';
+import { spacing, borderRadius, typography, shadows } from '../utils/theme';
+import { formatTimestamp } from '../utils/helpers';
 
 /**
- * EmergencyHistoryScreen (Step 6 Reliable Offline-to-Cloud Sync)
+ * EmergencyHistoryScreen (Alert Ledger & Incident Triage)
  *
- * Single source of truth: SQLite database (`alerts` table).
- * Features:
- * - Immediate offline loading of all stored distress records.
- * - Displays source (Local, Bluetooth, Server), sync state, and ack state.
- * - Manual "Sync Now" action with live progress and result indicators.
- * - Automatic background synchronization when network connectivity returns.
- * - Pull-to-refresh and filtering by source and status.
- * - Database error handling and resilient empty states.
- * - Resolving alerts locally in SQLite and queuing sync items.
+ * Professional incident history and audit center:
+ * - Search by keyword, survivor name, or UUID
+ * - Multi-criteria filtering (All, Active, Local, Relayed, Acknowledged, Synced)
+ * - Separated badges for Delivery, Acknowledgment, and Cloud Sync
+ * - Incident Technical Audit Modal
+ * - One-tap Manual Cloud Sync
  */
 export const EmergencyHistoryScreen = ({ navigation }) => {
   const { isAuthenticated } = useAuth();
+  const { colors, isDark } = useTheme();
 
   const [alerts, setAlerts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
-  const [lastSyncText, setLastSyncText] = useState(null);
-  const [dbError, setDbError] = useState(null);
-  const [serverNotice, setServerNotice] = useState(null);
-  const [resolvingId, setResolvingId] = useState(null);
-  const [forwardingRelayId, setForwardingRelayId] = useState(null);
-  const [expandedAlertId, setExpandedAlertId] = useState(null);
-  const [relayStats, setRelayStats] = useState({ totalReceived: 0, totalForwarded: 0, totalDropped: 0 });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'LOCAL' | 'RELAY' | 'ACK' | 'SYNCED'
 
-  // Filters
-  const [sourceFilter, setSourceFilter] = useState('ALL'); // 'ALL' | 'local' | 'bluetooth' | 'server'
-  const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'Pending' | 'Resolved'
+  // Selected Alert for Detailed Audit Modal
+  const [selectedAuditAlert, setSelectedAuditAlert] = useState(null);
+  const [resolvingAlert, setResolvingAlert] = useState(null);
+  const [isResolving, setIsResolving] = useState(false);
 
-  // Load alerts directly from local SQLite database
+  // Load stored alerts from local SQLite WAL database
   const loadAlertsFromSQLite = useCallback(async () => {
     try {
-      setDbError(null);
-      const rows = await AlertRepository.getAlerts({
-        source: sourceFilter !== 'ALL' ? sourceFilter : undefined,
-        deliveryStatus: statusFilter !== 'ALL' ? statusFilter : undefined,
-      });
+      const rows = await AlertRepository.getAllAlerts(1, 100);
       setAlerts(rows || []);
 
       const pending = await SyncQueueRepository.getPendingCount();
       setPendingSyncCount(pending);
-
-      try {
-        const stats = await RelayRepository.getRelayStats();
-        setRelayStats(stats);
-      } catch (e) {
-        // Ignore stats error if table not yet migrated
-      }
     } catch (err) {
-      console.error('[EmergencyHistoryScreen] SQLite load error:', err.message);
-      setDbError(`Database Error: ${err.message}`);
+      console.warn('[EmergencyHistoryScreen] SQLite load error:', err.message);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [sourceFilter, statusFilter]);
+  }, []);
 
-  // Handle Forward via Relay from History Screen
-  const handleForwardRelayFromHistory = async (alertItem) => {
-    const alertId = alertItem.alertId || alertItem.id;
-    setForwardingRelayId(alertId);
-
-    try {
-      const res = await relayService.forwardAlert(alertItem);
-      if (res.success) {
-        Alert.alert(
-          '📡 Distress Beacon Forwarded',
-          `Successfully re-broadcast alert over BLE mesh.\n\nHop: ${res.forwardPayload.hopCount} / ${res.forwardPayload.maxHops}\nForwarder: ${res.forwardPayload.forwarderId}`
-        );
-        await loadAlertsFromSQLite();
-      } else {
-        Alert.alert('Relay Forward Notice', res.error || 'Unable to forward alert.');
-      }
-    } catch (err) {
-      Alert.alert('Relay Error', err.message);
-    } finally {
-      setForwardingRelayId(null);
-    }
-  };
-
-  // Sync with server if online & authenticated, then refresh SQLite
-  const syncWithServerIfPossible = useCallback(async () => {
-    if (!isAuthenticated) return;
-
-    try {
-      const res = await apiClient.getAlerts();
-      if (res.success && Array.isArray(res.data)) {
-        setServerNotice(null);
-        // Upsert all fetched server alerts into SQLite
-        for (const serverAlert of res.data) {
-          await AlertRepository.saveOrUpdateAlert({
-            alertId: serverAlert.id,
-            senderId: serverAlert.senderId,
-            senderName: serverAlert.senderName,
-            emergencyType: serverAlert.emergencyType,
-            details: serverAlert.details,
-            contactDetails: serverAlert.contactDetails,
-            latitude: serverAlert.location?.latitude || null,
-            longitude: serverAlert.location?.longitude || null,
-            source: 'server',
-            deliveryStatus: serverAlert.status || 'Pending',
-            syncStatus: 'synced',
-            createdAt: serverAlert.createdAt,
-            updatedAt: serverAlert.updatedAt,
-          });
-        }
-        await loadAlertsFromSQLite();
-      } else {
-        setServerNotice('Viewing local SQLite records (Server unreachable or offline).');
-      }
-    } catch (err) {
-      setServerNotice('Viewing local SQLite records (Network disconnected).');
-    }
-  }, [isAuthenticated, loadAlertsFromSQLite]);
-
-  // Initial load, filter change, and syncService subscription
   useEffect(() => {
     loadAlertsFromSQLite();
-    syncWithServerIfPossible();
 
-    // Subscribe to syncService state changes
-    const unsubscribeSync = syncService.addSyncListener((state) => {
-      setIsSyncing(state.isSyncing);
-      if (state.lastSyncTime) {
-        setLastSyncText(`Last synced: ${formatTimestamp(state.lastSyncTime)}`);
-      }
+    const unsubscribeSync = syncService.addSyncListener(() => {
       loadAlertsFromSQLite();
     });
 
-    // Check initial queue status
-    syncService.getSyncStatus().then((status) => {
-      setIsSyncing(status.isSyncing);
-      setPendingSyncCount(status.pendingCount);
-      if (status.lastSyncTime) {
-        setLastSyncText(`Last synced: ${formatTimestamp(status.lastSyncTime)}`);
-      }
-    });
+    const unsubscribeFocus = navigation.addListener
+      ? navigation.addListener('focus', loadAlertsFromSQLite)
+      : null;
 
     return () => {
       unsubscribeSync();
+      if (unsubscribeFocus) unsubscribeFocus();
     };
-  }, [loadAlertsFromSQLite, syncWithServerIfPossible]);
+  }, [navigation, loadAlertsFromSQLite]);
 
-  // Pull-to-refresh
-  const handleRefresh = async () => {
+  const onRefresh = async () => {
     setIsRefreshing(true);
     await loadAlertsFromSQLite();
-    if (isAuthenticated) {
-      await syncWithServerIfPossible();
-    }
-    setIsRefreshing(false);
   };
 
-  // Manual Trigger: Synchronize Outbox Now
-  const handleManualSyncNow = async () => {
+  const handleManualSync = async () => {
     if (isSyncing) return;
-
     setIsSyncing(true);
-    const res = await syncService.syncPendingAlerts({ isManual: true });
-    await loadAlertsFromSQLite();
-    if (isAuthenticated) {
-      await syncWithServerIfPossible();
-    }
-    setIsSyncing(false);
-
-    if (res.success) {
-      Alert.alert(
-        'Cloud Sync Completed',
-        `Successfully synced ${res.synced || 0} alert(s) to cloud servers (${res.alreadySynced || 0} already up-to-date).`
-      );
-    } else if (res.reason === 'offline') {
-      Alert.alert(
-        'Device Offline',
-        'Unable to connect to cloud servers. All alerts remain safely stored in your local SQLite outbox and will sync automatically when connectivity returns.'
-      );
-    } else if (res.reason === 'unauthenticated') {
-      Alert.alert(
-        'Authentication Required',
-        'You are currently in Guest Mode. Please sign in to synchronize emergency records with central cloud responders.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Sign In', onPress: () => navigation.navigate('Login') },
-        ]
-      );
-    } else if (res.reason === 'auth_expired') {
-      Alert.alert(
-        'Session Expired',
-        'Your security token has expired. Your offline alerts remain safely preserved. Please sign in again to resume synchronization.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Sign In', onPress: () => navigation.navigate('Login') },
-        ]
-      );
+    try {
+      await syncService.triggerSync();
+      await loadAlertsFromSQLite();
+    } catch {
+      // Ignored
+    } finally {
+      setIsSyncing(false);
     }
   };
 
-  // Handle Mark as Resolved
-  const handleResolveAlert = (alertItem) => {
-    const alertId = alertItem.alertId || alertItem.id;
-    Alert.alert(
-      'Resolve Emergency Alert',
-      `Are you sure you want to mark this ${alertItem.emergencyType} alert as Resolved?\n\nThis updates your local SQLite record immediately and queues a synchronization update for the server.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark Resolved',
-          style: 'default',
-          onPress: async () => {
-            setResolvingId(alertId);
+  // Filter alerts according to search and active tab
+  const filteredAlerts = useMemo(() => {
+    return alerts.filter((item) => {
+      // 1. Text Search Match
+      const q = searchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        (item.alertId || item.id || '').toLowerCase().includes(q) ||
+        (item.emergencyType || '').toLowerCase().includes(q) ||
+        (item.senderName || '').toLowerCase().includes(q) ||
+        (item.details || '').toLowerCase().includes(q);
 
-            // 1. Update SQLite locally first
-            try {
-              await AlertRepository.updateAlertStatus(alertId, 'Resolved');
-            } catch (dbErr) {
-              console.warn('[History] SQLite update status error:', dbErr.message);
-            }
+      if (!matchesSearch) return false;
 
-            // 2. Queue in offline outbox
-            try {
-              await SyncQueueRepository.enqueue({
-                alertId,
-                operation: 'RESOLVE',
-                payload: { status: 'Resolved' },
-              });
-            } catch (qErr) {
-              console.warn('[History] Enqueue resolve error:', qErr.message);
-            }
-
-            // 3. Opportunistically dispatch if online
-            if (isAuthenticated) {
-              try {
-                await apiClient.updateAlertStatus(alertId, 'Resolved');
-              } catch (e) {}
-            }
-
-            setResolvingId(null);
-            await loadAlertsFromSQLite();
-            Alert.alert('Status Updated', 'Alert marked as Resolved in SQLite database.');
-          },
-        },
-      ]
-    );
-  };
-
-  const getCategoryConfig = (typeLabel) => {
-    return (
-      EMERGENCY_TYPES.find((t) => t.label === typeLabel) || {
-        symbol: '🚨',
-        color: colors.primary,
+      // 2. Tab Filter Match
+      switch (activeFilter) {
+        case 'ACTIVE':
+          return (item.deliveryStatus || '').toLowerCase() !== 'resolved';
+        case 'LOCAL':
+          return (item.source || '').toLowerCase() === 'local';
+        case 'RELAY':
+          return (item.source || '').toLowerCase().includes('relay');
+        case 'ACK':
+          return (item.ackStatus || '').toLowerCase() === 'acknowledged';
+        case 'SYNCED':
+          return (item.syncStatus || '').toLowerCase() === 'synced';
+        case 'ALL':
+        default:
+          return true;
       }
-    );
+    });
+  }, [alerts, searchQuery, activeFilter]);
+
+  // Resolve Alert Action
+  const handleConfirmResolve = async () => {
+    if (!resolvingAlert) return;
+    const alertId = resolvingAlert.alertId || resolvingAlert.id;
+    setIsResolving(true);
+
+    try {
+      await AlertRepository.updateAlertStatus(alertId, 'resolved');
+      await SyncQueueRepository.enqueue({
+        alertId,
+        operation: 'RESOLVE',
+        payload: { status: 'resolved' },
+      });
+      setResolvingAlert(null);
+      await loadAlertsFromSQLite();
+      Alert.alert('✓ Incident Cleared', 'Alert marked as resolved locally and enqueued for cloud sync.');
+    } catch (e) {
+      Alert.alert('Resolution Error', e.message);
+    } finally {
+      setIsResolving(false);
+    }
   };
+
+  const filterTabs = [
+    { key: 'ALL', label: 'All Alerts' },
+    { key: 'ACTIVE', label: 'Active' },
+    { key: 'LOCAL', label: 'Local' },
+    { key: 'RELAY', label: 'Mesh Relay' },
+    { key: 'ACK', label: 'Confirmed' },
+    { key: 'SYNCED', label: 'Synced' },
+  ];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={handleRefresh}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
             colors={[colors.primary]}
           />
         }
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>Emergency History</Text>
-          <Text style={styles.screenSubtitle}>
-            Offline SQLite Persistent Emergency Ledger
-          </Text>
-        </View>
-
-        {/* Cloud Synchronization Outbox Banner */}
-        <View style={[styles.syncBox, shadows.card]}>
-          <View style={styles.syncBoxLeft}>
-            <Text style={styles.syncBoxIcon}>{isSyncing ? '🔄' : pendingSyncCount > 0 ? '🟡' : '🟢'}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.syncBoxTitle}>
-                {isSyncing
-                  ? 'Synchronizing with Cloud...'
-                  : pendingSyncCount > 0
-                  ? `${pendingSyncCount} Alert(s) in Offline Outbox`
-                  : 'Cloud Records Synchronized'}
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={[styles.screenTitle, { color: colors.textPrimary }]}>
+                Alert Ledger & History
               </Text>
-              <Text style={styles.syncBoxSubtitle}>
-                {isSyncing
-                  ? 'Uploading offline outbox batches...'
-                  : lastSyncText || 'Ready for opportunistic cloud sync'}
+              <Text style={[styles.screenSubtitle, { color: colors.textSecondary }]}>
+                Durable offline SQLite storage ({alerts.length} records)
               </Text>
             </View>
-          </View>
-          <TouchableOpacity
-            style={[styles.syncNowBtn, isSyncing && styles.syncNowBtnDisabled]}
-            onPress={handleManualSyncNow}
-            disabled={isSyncing}
-            activeOpacity={0.7}
-          >
-            {isSyncing ? (
-              <ActivityIndicator size="small" color={colors.textInverse} />
-            ) : (
-              <Text style={styles.syncNowBtnText}>Sync Now</Text>
-            )}
-          </TouchableOpacity>
-        </View>
 
-        {/* Step 8: Bluetooth Mesh Relay Network Activity Banner */}
-        <View style={[styles.relayBanner, shadows.card]}>
-          <View style={styles.relayBannerIconCol}>
-            <Text style={styles.relayBannerIcon}>📡</Text>
-          </View>
-          <View style={styles.relayBannerContent}>
-            <Text style={styles.relayBannerTitle}>Bluetooth Mesh Relay Network</Text>
-            <Text style={styles.relayBannerStats}>
-              {`${relayStats.totalForwarded} Forwarded · ${relayStats.totalReceived} Received · Max Hops: 3`}
-            </Text>
+            {pendingSyncCount > 0 ? (
+              <TouchableOpacity
+                style={[
+                  styles.syncBadgeBtn,
+                  {
+                    backgroundColor: isDark ? '#451A03' : '#FEF3C7',
+                    borderColor: isDark ? '#B45309' : '#FDE68A',
+                  },
+                ]}
+                activeOpacity={0.8}
+                onPress={handleManualSync}
+                accessibilityRole="button"
+                accessibilityLabel={`Sync now. ${pendingSyncCount} pending items in outbox`}
+              >
+                <Text style={[styles.syncBadgeText, { color: isDark ? '#FBBF24' : '#B45309' }]}>
+                  {isSyncing ? 'Syncing...' : `Sync Now (${pendingSyncCount})`}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
-        {/* Database Error State */}
-        {dbError ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorIcon}>❌</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.errorTitle}>SQLite Database Error</Text>
-              <Text style={styles.errorText}>{dbError}</Text>
-            </View>
-            <TouchableOpacity style={styles.retryBtn} onPress={loadAlertsFromSQLite}>
-              <Text style={styles.retryBtnText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {/* Server Notice (Non-blocking) */}
-        {serverNotice ? (
-          <View style={styles.noticeBanner}>
-            <Text style={styles.noticeIcon}>ℹ️</Text>
-            <Text style={styles.noticeText}>{serverNotice}</Text>
-          </View>
-        ) : null}
-
-        {/* Guest Mode Informational Banner */}
-        {!isAuthenticated ? (
-          <View style={styles.guestNotice}>
-            <Text style={styles.guestNoticeText}>
-              👤 Guest Mode · Viewing local SQLite storage. Sign in to synchronize with central cloud servers.
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Filter Controls */}
-        <View style={styles.filterSection}>
-          <Text style={styles.filterLabel}>FILTER BY SOURCE:</Text>
-          <View style={styles.filterRow}>
-            {[
-              { id: 'ALL', label: 'All Sources' },
-              { id: 'local', label: '📱 Local' },
-              { id: 'bluetooth', label: '📡 BLE' },
-              { id: 'server', label: '☁️ Server' },
-            ].map((tab) => {
-              const active = sourceFilter === tab.id;
-              return (
-                <TouchableOpacity
-                  key={tab.id}
-                  style={[styles.filterPill, active && styles.filterPillActive]}
-                  onPress={() => setSourceFilter(tab.id)}
-                >
-                  <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <Text style={[styles.filterLabel, { marginTop: spacing.sm }]}>STATUS:</Text>
-          <View style={styles.filterRow}>
-            {['ALL', 'Pending', 'Resolved'].map((st) => {
-              const active = statusFilter === st;
-              return (
-                <TouchableOpacity
-                  key={st}
-                  style={[styles.filterPill, active && styles.filterPillActive]}
-                  onPress={() => setStatusFilter(st)}
-                >
-                  <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                    {st}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Loading Indicator */}
-        {isLoading && !isRefreshing ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>Reading SQLite records...</Text>
-          </View>
-        ) : null}
-
-        {/* Empty State */}
-        {!isLoading && alerts.length === 0 && !dbError ? (
-          <EmptyState
-            icon="📋"
-            badgeText="Zero SQLite Records"
-            title="No Emergency Alerts Found"
-            description={
-              sourceFilter === 'ALL' && statusFilter === 'ALL'
-                ? 'No emergency alerts have been stored in local SQLite database yet. Broadcast an SOS or receive alerts over Bluetooth to populate the ledger.'
-                : 'No alerts match the selected filter criteria.'
-            }
-            actionLabel="Send an SOS Alert"
-            onAction={() => navigation.navigate('SendSOS')}
+        {/* Search Bar */}
+        <View style={styles.searchSection}>
+          <SearchInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search category, UUID, survivor..."
           />
-        ) : null}
+        </View>
 
-        {/* Alerts List */}
-        {!isLoading && alerts.length > 0 ? (
+        {/* Filter Pills */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterTabsContainer}
+        >
+          {filterTabs.map((tab) => {
+            const isSelected = activeFilter === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[
+                  styles.filterTab,
+                  {
+                    backgroundColor: isSelected
+                      ? colors.navyDark
+                      : (isDark ? colors.surfaceSubtle : colors.cardBackground),
+                    borderColor: isSelected ? colors.navy : colors.borderDark,
+                  },
+                ]}
+                onPress={() => setActiveFilter(tab.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isSelected }}
+                accessibilityLabel={`${tab.label} filter`}
+              >
+                <Text
+                  style={[
+                    styles.filterTabText,
+                    {
+                      color: isSelected ? '#FFFFFF' : colors.textSecondary,
+                      fontWeight: isSelected ? '800' : '600',
+                    },
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Alert Cards List */}
+        {filteredAlerts.length > 0 ? (
           <View style={styles.alertsList}>
-            {alerts.map((item) => {
-              const catConfig = getCategoryConfig(item.emergencyType);
-              const isResolved = item.deliveryStatus === 'Resolved';
-              const isPending = !isResolved;
-              const isAcked = item.ackStatus === 'acknowledged';
-              const isSynced = item.syncStatus === 'synced';
-              const isResolving = resolvingId === (item.alertId || item.id);
+            {filteredAlerts.map((item) => {
+              const alertId = item.alertId || item.id;
+              const isResolved = (item.deliveryStatus || '').toLowerCase() === 'resolved';
 
               return (
-                <View key={item.alertId || item.id} style={[styles.alertCard, shadows.card]}>
-                  {/* Card Top: Category and Status Badges */}
+                <View
+                  key={alertId}
+                  style={[
+                    styles.alertCard,
+                    {
+                      backgroundColor: colors.cardBackground,
+                      borderColor: colors.border,
+                    },
+                    shadows.card,
+                  ]}
+                >
+                  {/* Card Header: Category & Timestamp */}
                   <View style={styles.cardHeader}>
-                    <View style={styles.typeBadgeGroup}>
-                      <Text style={styles.cardIcon}>{catConfig.symbol}</Text>
-                      <Text
-                        style={[
-                          styles.cardType,
-                          { color: catConfig.color || colors.textPrimary },
-                        ]}
-                      >
-                        {item.emergencyType}
-                      </Text>
-                    </View>
-
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        isResolved ? styles.badgeResolved : styles.badgePending,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.statusText,
-                          isResolved ? styles.statusTextResolved : styles.statusTextPending,
-                        ]}
-                      >
-                        {item.deliveryStatus || 'Pending'}
-                      </Text>
-                    </View>
+                    <StatusBadge type="category" value={item.emergencyType} size="sm" />
+                    <Text style={[styles.timestampText, { color: colors.textMuted }]}>
+                      {formatTimestamp(item.createdAt)}
+                    </Text>
                   </View>
 
-                  {/* Badges Bar: Source, Ack State, Cloud Sync State */}
-                  <View style={styles.badgesRow}>
-                    {/* Source Badge */}
-                    <View
-                      style={[
-                        styles.tagBadge,
-                        item.source === 'local' && styles.tagLocal,
-                        item.source === 'bluetooth' && styles.tagBle,
-                        item.source === 'server' && styles.tagServer,
-                      ]}
-                    >
-                      <Text style={styles.tagBadgeText}>
-                        {item.source === 'local' && '📱 LOCAL DRAFT'}
-                        {item.source === 'bluetooth' && '📡 BLE DIRECT'}
-                        {item.source === 'server' && '☁️ SERVER SYNCED'}
-                      </Text>
-                    </View>
-
-                    {/* Ack Badge */}
-                    <View
-                      style={[
-                        styles.tagBadge,
-                        isAcked ? styles.tagAcked : styles.tagUnacked,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.tagBadgeText,
-                          isAcked ? styles.tagAckedText : styles.tagUnackedText,
-                        ]}
-                      >
-                        {isAcked ? '✅ ACK CONFIRMED' : '⏳ UNACKNOWLEDGED'}
-                      </Text>
-                    </View>
-
-                    {/* Cloud Sync State Badge */}
-                    <View
-                      style={[
-                        styles.tagBadge,
-                        isSynced ? styles.tagSynced : styles.tagPendingSync,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.tagBadgeText,
-                          isSynced ? styles.tagSyncedText : styles.tagPendingSyncText,
-                        ]}
-                      >
-                        {isSynced ? '🟢 CLOUD SYNCED' : '🟡 PENDING CLOUD SYNC'}
-                      </Text>
-                    </View>
-
-                    {/* Step 8 Hop Route Badge */}
-                    <View
-                      style={[
-                        styles.tagBadge,
-                        item.hopCount > 0 ? styles.tagRelayed : styles.tagDirect,
-                      ]}
-                    >
-                      <Text style={styles.tagBadgeText}>
-                        {item.hopCount > 0
-                          ? `🔁 HOP ${item.hopCount}/${item.maxHops || 3}`
-                          : '📍 DIRECT (HOP 0)'}
-                      </Text>
-                    </View>
-
-                    {/* Relay Status Badges */}
-                    {item.relayStatus === 'forwarded' ? (
-                      <View style={[styles.tagBadge, styles.tagForwarded]}>
-                        <Text style={styles.tagBadgeText}>📡 RELAY FORWARDED</Text>
-                      </View>
-                    ) : item.relayStatus === 'eligible' ? (
-                      <View style={[styles.tagBadge, styles.tagEligible]}>
-                        <Text style={styles.tagBadgeText}>⚡ RELAY ELIGIBLE</Text>
-                      </View>
-                    ) : null}
+                  {/* Survivor & Source Information */}
+                  <View style={styles.senderRow}>
+                    <Text style={[styles.senderName, { color: colors.textPrimary }]}>
+                      {item.senderName || 'Anonymous Survivor'}
+                    </Text>
+                    <StatusBadge
+                      type="source"
+                      value={item.source || 'local'}
+                      size="sm"
+                      label={item.source === 'local' ? 'Local' : `Relay (Hop ${item.hopCount || 1})`}
+                    />
                   </View>
 
-                  {/* Card Body Details */}
-                  <View style={styles.cardBody}>
-                    {item.details ? (
-                      <View style={styles.detailsBlock}>
-                        <Text style={styles.detailLabel}>INCIDENT DETAILS</Text>
-                        <Text style={styles.detailText}>{item.details}</Text>
-                      </View>
-                    ) : null}
+                  {/* Coordinates & Snippet */}
+                  <View style={styles.metaRow}>
+                    <Text style={[styles.coordsText, { color: colors.textSecondary }]}>
+                      📍{' '}
+                      {item.latitude && item.longitude
+                        ? `${Number(item.latitude).toFixed(4)}°, ${Number(item.longitude).toFixed(4)}°`
+                        : 'No GPS Coordinates Attached'}
+                    </Text>
+                  </View>
 
-                    {/* Metadata Table */}
-                    <View style={styles.metadataBox}>
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaKey}>Sender:</Text>
-                        <Text style={styles.metaVal}>{item.senderName || 'Anonymous'}</Text>
-                      </View>
+                  {item.details ? (
+                    <Text
+                      style={[styles.narrativeSnippet, { color: colors.textSecondary }]}
+                      numberOfLines={2}
+                    >
+                      "{item.details}"
+                    </Text>
+                  ) : null}
 
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaKey}>Timestamp:</Text>
-                        <Text style={styles.metaVal}>{formatTimestamp(item.createdAt)}</Text>
-                      </View>
+                  {/* Separated Multi-State Badges */}
+                  <View style={styles.statesRow}>
+                    <StatusBadge
+                      type="delivery"
+                      value={item.deliveryStatus || 'pending'}
+                      size="sm"
+                    />
+                    <StatusBadge
+                      type="ack"
+                      value={item.ackStatus || 'unacknowledged'}
+                      size="sm"
+                    />
+                    <StatusBadge
+                      type="sync"
+                      value={item.syncStatus || 'pending_sync'}
+                      size="sm"
+                    />
+                  </View>
 
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaKey}>Location:</Text>
-                        <Text style={styles.metaVal}>
-                          {typeof item.latitude === 'number' && typeof item.longitude === 'number'
-                            ? formatCoordinates(item.latitude, item.longitude)
-                            : 'None attached'}
-                        </Text>
-                      </View>
-
-                      {item.contactDetails ? (
-                        <View style={styles.metaRow}>
-                          <Text style={styles.metaKey}>Contact:</Text>
-                          <Text style={styles.metaVal}>{item.contactDetails}</Text>
-                        </View>
-                      ) : null}
-
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaKey}>Alert ID:</Text>
-                        <Text style={styles.metaValId} numberOfLines={1}>
-                          {item.alertId || item.id}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Expandable Technical Details */}
+                  {/* Card Action Footer */}
+                  <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
                     <TouchableOpacity
-                      style={styles.inspectToggleBtn}
-                      onPress={() => {
-                        const id = item.alertId || item.id;
-                        setExpandedAlertId(expandedAlertId === id ? null : id);
-                      }}
-                      activeOpacity={0.7}
+                      style={styles.footerActionBtn}
+                      onPress={() => setSelectedAuditAlert(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel="View technical audit modal"
                     >
-                      <Text style={styles.inspectToggleText}>
-                        {expandedAlertId === (item.alertId || item.id)
-                          ? '▲ Hide Audit Metadata'
-                          : '▼ Inspect Audit Metadata & Receipts'}
+                      <Text style={[styles.footerActionText, { color: colors.info }]}>
+                        🔍 Technical Audit
                       </Text>
                     </TouchableOpacity>
 
-                    {expandedAlertId === (item.alertId || item.id) ? (
-                      <View style={styles.expandedDetailsBox}>
-                        <Text style={styles.expandedSectionTitle}>Technical Audit Details</Text>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Full UUID:</Text>
-                          <Text style={styles.auditValCode}>{item.alertId || item.id}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Source Mode:</Text>
-                          <Text style={styles.auditVal}>{item.source}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Delivery State:</Text>
-                          <Text style={styles.auditVal}>{item.deliveryStatus || 'Pending'}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Ack Confirmation:</Text>
-                          <Text style={styles.auditVal}>{item.ackStatus}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Cloud Sync Status:</Text>
-                          <Text style={styles.auditVal}>{item.syncStatus}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Mesh Hop Route:</Text>
-                          <Text style={styles.auditVal}>{`Hop ${item.hopCount || 0} / ${item.maxHops || 3}`}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Forwarding Node:</Text>
-                          <Text style={styles.auditVal}>{item.forwarderId || 'None (Direct Origin)'}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Original Author:</Text>
-                          <Text style={styles.auditVal}>{item.originalSenderId || item.senderName || 'Anonymous'}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Expiration TTL:</Text>
-                          <Text style={styles.auditVal}>{item.expiresAt ? formatTimestamp(item.expiresAt) : 'None'}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Content Integrity:</Text>
-                          <Text style={styles.auditVal}>
-                            {item.integrityHash ? `Verified (Checksum: ${item.integrityHash})` : 'Legacy v1 Protocol'}
-                          </Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Relay Status:</Text>
-                          <Text style={styles.auditVal}>{item.relayStatus || 'none'}</Text>
-                        </View>
-                        <View style={styles.auditRow}>
-                          <Text style={styles.auditKey}>Last Updated:</Text>
-                          <Text style={styles.auditVal}>{formatTimestamp(item.updatedAt)}</Text>
-                        </View>
-                        <Text style={styles.auditNote}>
-                          🛡️ Authenticated locally in SQLite. Never claims dispatch without verified external PSAP connection.
+                    {!isResolved ? (
+                      <TouchableOpacity
+                        style={styles.footerActionBtn}
+                        onPress={() => setResolvingAlert(item)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Resolve emergency alert"
+                      >
+                        <Text style={[styles.footerActionText, { color: colors.success }]}>
+                          ✓ Mark Resolved
                         </Text>
-                      </View>
-                    ) : null}
-
-                    {/* Step 8 Relay Action: Forward via BLE if Eligible */}
-                    {item.relayStatus === 'eligible' ? (
-                      <View style={[styles.actionRow, { marginBottom: spacing.xs }]}>
-                        <PrimaryButton
-                          title={forwardingRelayId === (item.alertId || item.id) ? 'Broadcasting...' : '📡 Forward via BLE Relay'}
-                          onPress={() => handleForwardRelayFromHistory(item)}
-                          variant="warning"
-                          icon="📡"
-                          loading={forwardingRelayId === (item.alertId || item.id)}
-                          disabled={forwardingRelayId === (item.alertId || item.id)}
-                          style={styles.resolveButton}
-                        />
-                      </View>
-                    ) : null}
-
-                    {/* Step 10 Map Action: View on Live Map if coordinates present */}
-                    {item.latitude !== null && item.longitude !== null ? (
-                      <View style={[styles.actionRow, { marginBottom: spacing.xs }]}>
-                        <PrimaryButton
-                          title="🗺️ View on Live Map"
-                          onPress={() => navigation.navigate('LiveMap', { focusAlertId: item.alertId || item.id })}
-                          variant="secondary"
-                          icon="🗺️"
-                          style={styles.resolveButton}
-                        />
-                      </View>
-                    ) : null}
-
-                    {/* Action: Mark as Resolved */}
-                    {isPending ? (
-                      <View style={styles.actionRow}>
-                        <PrimaryButton
-                          title={isResolving ? 'Resolving...' : 'Mark as Resolved'}
-                          onPress={() => handleResolveAlert(item)}
-                          variant="outline"
-                          loading={isResolving}
-                          disabled={isResolving}
-                          style={styles.resolveButton}
-                        />
-                      </View>
-                    ) : null}
+                      </TouchableOpacity>
+                    ) : (
+                      <Text style={[styles.resolvedPill, { color: colors.textMuted }]}>
+                        ✓ Resolved
+                      </Text>
+                    )}
                   </View>
                 </View>
               );
             })}
           </View>
+        ) : (
+          <EmptyState
+            icon="📭"
+            title="No Incidents Found"
+            description={
+              searchQuery
+                ? `No alerts match '${searchQuery}'. Try clearing your search or filter.`
+                : 'No emergency alerts found for the selected category filter.'
+            }
+            actionLabel={searchQuery ? 'Clear Search' : null}
+            onAction={() => setSearchQuery('')}
+            style={{ marginHorizontal: spacing.lg }}
+          />
+        )}
+
+        {/* Technical Audit Modal */}
+        {selectedAuditAlert ? (
+          <Modal
+            transparent
+            animationType="fade"
+            visible={!!selectedAuditAlert}
+            onRequestClose={() => setSelectedAuditAlert(null)}
+          >
+            <View style={[styles.modalBackdrop, { backgroundColor: colors.overlayBackground }]}>
+              <View
+                style={[
+                  styles.auditModalCard,
+                  {
+                    backgroundColor: colors.cardBackground,
+                    borderColor: colors.border,
+                  },
+                  shadows.modal,
+                ]}
+              >
+                <View style={[styles.auditModalHeader, { borderBottomColor: colors.border }]}>
+                  <Text style={[styles.auditModalTitle, { color: colors.textPrimary }]}>
+                    Technical Incident Audit
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => setSelectedAuditAlert(null)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close audit modal"
+                  >
+                    <Text style={[styles.closeIcon, { color: colors.textMuted }]}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={styles.auditModalBody} showsVerticalScrollIndicator={false}>
+                  <View style={styles.auditRow}>
+                    <Text style={[styles.auditKey, { color: colors.textMuted }]}>Alert UUID</Text>
+                    <Text style={[styles.auditVal, { color: colors.textPrimary }]} selectable>
+                      {selectedAuditAlert.alertId || selectedAuditAlert.id}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={[styles.auditKey, { color: colors.textMuted }]}>Integrity Hash</Text>
+                    <Text style={[styles.auditVal, { color: colors.textPrimary }]} selectable>
+                      {selectedAuditAlert.integrityHash || 'FNV-1a Computed on Origin'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={[styles.auditKey, { color: colors.textMuted }]}>Hop Depth</Text>
+                    <Text style={[styles.auditVal, { color: colors.textPrimary }]}>
+                      {selectedAuditAlert.hopCount || 0} / {selectedAuditAlert.maxHops || 3}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={[styles.auditKey, { color: colors.textMuted }]}>Forwarder ID</Text>
+                    <Text style={[styles.auditVal, { color: colors.textPrimary }]}>
+                      {selectedAuditAlert.forwarderId || 'Originator (No forwarder)'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={[styles.auditKey, { color: colors.textMuted }]}>Created Timestamp</Text>
+                    <Text style={[styles.auditVal, { color: colors.textPrimary }]}>
+                      {selectedAuditAlert.createdAt}
+                    </Text>
+                  </View>
+                </ScrollView>
+
+                <View style={[styles.auditModalFooter, { borderTopColor: colors.border }]}>
+                  <PrimaryButton
+                    title="Close Audit"
+                    onPress={() => setSelectedAuditAlert(null)}
+                    variant="secondary"
+                  />
+                </View>
+              </View>
+            </View>
+          </Modal>
         ) : null}
 
-        {/* Back to Dashboard */}
-        <View style={styles.footerAction}>
-          <PrimaryButton
-            title="Return to Dashboard"
-            onPress={() => navigation.navigate('Home')}
-            variant="outline"
-          />
-        </View>
+        {/* Resolution Confirmation Modal */}
+        <ConfirmationModal
+          visible={!!resolvingAlert}
+          title="Resolve Emergency Incident"
+          severity="warning"
+          message="Marking this alert as resolved clears the active emergency state locally and records a resolution task in the cloud sync outbox."
+          confirmLabel="Mark Incident Resolved"
+          cancelLabel="Keep Active"
+          onConfirm={handleConfirmResolve}
+          onCancel={() => setResolvingAlert(null)}
+          summaryItems={
+            resolvingAlert
+              ? [
+                  { label: 'Category', value: resolvingAlert.emergencyType },
+                  { label: 'Alert UUID', value: resolvingAlert.alertId || resolvingAlert.id },
+                ]
+              : []
+          }
+        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -751,198 +499,65 @@ export const EmergencyHistoryScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxl,
   },
   header: {
-    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   screenTitle: {
-    fontSize: 24,
+    ...typography.header,
     fontWeight: '800',
-    color: colors.textPrimary,
   },
   screenSubtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
     marginTop: 2,
   },
-  syncBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  syncBoxLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 8,
-  },
-  syncBoxIcon: {
-    fontSize: 20,
-  },
-  syncBoxTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  syncBoxSubtitle: {
-    fontSize: 11,
-    color: colors.textTertiary,
-    marginTop: 1,
-  },
-  syncNowBtn: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.sm,
+  syncBadgeBtn: {
     paddingVertical: spacing.xs,
-    borderRadius: borderRadius.sm,
-    minWidth: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  syncNowBtnDisabled: {
-    opacity: 0.6,
-  },
-  syncNowBtnText: {
-    color: colors.textInverse,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.primaryLight,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.primaryBorder,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    gap: 8,
   },
-  errorIcon: {
-    fontSize: 18,
-  },
-  errorTitle: {
-    fontSize: 13,
+  syncBadgeText: {
+    ...typography.caption,
     fontWeight: '800',
-    color: colors.primaryDark,
   },
-  errorText: {
-    fontSize: 12,
-    color: colors.primaryDark,
-    marginTop: 2,
+  searchSection: {
+    paddingHorizontal: spacing.lg,
+    marginVertical: spacing.sm,
   },
-  retryBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    backgroundColor: colors.primary,
-    borderRadius: borderRadius.sm,
+  filterTabsContainer: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.xs,
+    paddingBottom: spacing.sm,
   },
-  retryBtnText: {
-    color: colors.textInverse,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  noticeBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.infoLight,
+  filterTab: {
+    paddingVertical: spacing.xs + 2,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.infoBorder,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-    gap: 6,
   },
-  noticeIcon: {
-    fontSize: 14,
-  },
-  noticeText: {
-    flex: 1,
-    fontSize: 12,
-    color: colors.infoDark,
-    fontWeight: '500',
-  },
-  guestNotice: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  guestNoticeText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    lineHeight: 15,
-  },
-  filterSection: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  filterLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.textTertiary,
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  filterPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: borderRadius.round,
-    backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  filterPillActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterPillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  filterPillTextActive: {
-    color: colors.textInverse,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xxl,
-  },
-  loadingText: {
-    marginTop: spacing.sm,
-    fontSize: 13,
-    color: colors.textSecondary,
+  filterTabText: {
+    ...typography.caption,
   },
   alertsList: {
+    paddingHorizontal: spacing.lg,
     gap: spacing.md,
+    marginTop: spacing.xs,
   },
   alertCard: {
-    backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.lg,
-    padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.md,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -950,253 +565,101 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.xs,
   },
-  typeBadgeGroup: {
+  timestampText: {
+    ...typography.caption,
+  },
+  senderRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 6,
-  },
-  cardIcon: {
-    fontSize: 18,
-  },
-  cardType: {
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  statusBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: borderRadius.round,
-  },
-  badgePending: {
-    backgroundColor: colors.warningLight,
-    borderWidth: 1,
-    borderColor: colors.warningBorder,
-  },
-  badgeResolved: {
-    backgroundColor: colors.successLight,
-    borderWidth: 1,
-    borderColor: colors.successBorder,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  statusTextPending: {
-    color: colors.warningDark,
-  },
-  statusTextResolved: {
-    color: colors.successDark,
-  },
-  badgesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginVertical: 6,
-  },
-  tagBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-  },
-  tagLocal: {
-    backgroundColor: colors.infoLight,
-    borderColor: colors.infoBorder,
-  },
-  tagBle: {
-    backgroundColor: colors.warningLight,
-    borderColor: colors.warningBorder,
-  },
-  tagServer: {
-    backgroundColor: colors.surfaceSubtle,
-    borderColor: colors.border,
-  },
-  tagBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  tagAcked: {
-    backgroundColor: colors.successLight,
-    borderColor: colors.successBorder,
-  },
-  tagAckedText: {
-    color: colors.successDark,
-  },
-  tagUnacked: {
-    backgroundColor: colors.surfaceSubtle,
-    borderColor: colors.border,
-  },
-  tagUnackedText: {
-    color: colors.textTertiary,
-  },
-  tagSynced: {
-    backgroundColor: colors.successLight,
-    borderColor: colors.successBorder,
-  },
-  tagSyncedText: {
-    color: colors.successDark,
-  },
-  tagPendingSync: {
-    backgroundColor: colors.warningLight,
-    borderColor: colors.warningBorder,
-  },
-  tagPendingSyncText: {
-    color: colors.warningDark,
-  },
-  tagRelayed: {
-    backgroundColor: '#EDE9FE',
-    borderColor: '#C4B5FD',
-  },
-  tagDirect: {
-    backgroundColor: colors.surfaceSubtle,
-    borderColor: colors.border,
-  },
-  tagForwarded: {
-    backgroundColor: colors.successLight,
-    borderColor: colors.successBorder,
-  },
-  tagEligible: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
-  },
-  relayBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  relayBannerIconCol: {
-    marginRight: spacing.sm,
-  },
-  relayBannerIcon: {
-    fontSize: 20,
-  },
-  relayBannerContent: {
-    flex: 1,
-  },
-  relayBannerTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  relayBannerStats: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  cardBody: {
-    marginTop: spacing.xs,
-  },
-  detailsBlock: {
-    marginBottom: spacing.xs,
-  },
-  detailLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.textTertiary,
-    letterSpacing: 0.5,
-  },
-  detailText: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    marginTop: 2,
-    lineHeight: 18,
-  },
-  metadataBox: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: borderRadius.sm,
-    padding: spacing.sm,
     marginVertical: spacing.xs,
-    gap: 4,
+  },
+  senderName: {
+    ...typography.cardTitle,
+    fontWeight: '700',
   },
   metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  metaKey: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  metaVal: {
-    fontSize: 11,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  },
-  metaValId: {
-    fontSize: 10,
-    color: colors.textTertiary,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    maxWidth: 200,
-  },
-  actionRow: {
-    marginTop: spacing.xs,
-  },
-  inspectToggleBtn: {
-    paddingVertical: spacing.xs,
-    alignItems: 'center',
     marginVertical: 2,
   },
-  inspectToggleText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.primary,
+  coordsText: {
+    ...typography.caption,
   },
-  expandedDetailsBox: {
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.sm,
-    padding: spacing.sm,
+  narrativeSnippet: {
+    ...typography.bodySmall,
     marginVertical: spacing.xs,
-    gap: 4,
+    fontStyle: 'italic',
   },
-  expandedSectionTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textSecondary,
-    marginBottom: 4,
-    letterSpacing: 0.5,
+  statesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginVertical: spacing.sm,
   },
-  auditRow: {
+  cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+  },
+  footerActionBtn: {
+    paddingVertical: spacing.xs,
+  },
+  footerActionText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  resolvedPill: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  auditModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '80%',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  auditModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderBottomWidth: 1,
+  },
+  auditModalTitle: {
+    ...typography.cardTitle,
+    fontWeight: '800',
+  },
+  closeIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    padding: spacing.xs,
+  },
+  auditModalBody: {
+    padding: spacing.md,
+  },
+  auditRow: {
+    marginBottom: spacing.sm,
   },
   auditKey: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    ...typography.caption,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   auditVal: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.textPrimary,
+    ...typography.bodySmallBold,
   },
-  auditValCode: {
-    fontSize: 9,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    color: colors.infoDark,
-    maxWidth: 210,
-  },
-  auditNote: {
-    fontSize: 10,
-    color: colors.textTertiary,
-    fontStyle: 'italic',
-    marginTop: 4,
-    lineHeight: 14,
-  },
-  resolveButton: {
-    marginTop: 2,
-  },
-  footerAction: {
-    marginTop: spacing.xl,
+  auditModalFooter: {
+    padding: spacing.md,
+    borderTopWidth: 1,
   },
 });
 

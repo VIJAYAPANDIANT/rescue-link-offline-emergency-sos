@@ -7,33 +7,31 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import { colors, shadows } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
+import { shadows, borderRadius } from '../utils/theme';
 
 /**
  * SOSButton Component
  *
  * Prominent circular emergency trigger button designed with:
  * 1. Animated glowing pulse ring to capture attention in high-stress situations.
- * 2. High-contrast white typography on emergency crimson red.
- * 3. Tactile touch feedback and accessible hit area.
- *
- * @param {Function} onPress - Callback invoked when SOS button is pressed
- * @param {string} title - Label shown inside the button (defaults to 'SOS')
- * @param {string} subtitle - Secondary helper text (defaults to 'TAP FOR EMERGENCY')
- * @param {boolean} disabled - Whether the button is interactable
+ * 2. High-contrast typography on emergency crimson red (or cobalt blue for test mode).
+ * 3. Clearly labeled TEST MODE distinction so drills are never confused with real emergencies.
+ * 4. Screen-reader accessible with large touch target.
  */
 export const SOSButton = ({
   onPress,
   title = 'SOS',
   subtitle = 'TAP FOR EMERGENCY',
   disabled = false,
+  testMode = false,
+  size = 200,
 }) => {
-  // Animated value for pulsing scale and fade ring
+  const { colors, isDark } = useTheme();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseOpacity = useRef(new Animated.Value(0.6)).current;
 
   useEffect(() => {
-    // Continuous breathing/pulsing animation loop
     const pulseLoop = Animated.loop(
       Animated.parallel([
         Animated.sequence([
@@ -66,9 +64,12 @@ export const SOSButton = ({
     );
 
     pulseLoop.start();
-
     return () => pulseLoop.stop();
   }, [pulseAnim, pulseOpacity]);
+
+  const buttonBg = testMode ? colors.info : colors.primary;
+  const ringBg = testMode ? (isDark ? '#172554' : '#EFF6FF') : (isDark ? '#450A0A' : '#FEE2E2');
+  const ringBorder = testMode ? colors.infoBorder : colors.primaryBorder;
 
   return (
     <View style={styles.container}>
@@ -77,6 +78,10 @@ export const SOSButton = ({
         style={[
           styles.pulseRing,
           {
+            width: size + 40,
+            height: size + 40,
+            borderRadius: (size + 40) / 2,
+            backgroundColor: buttonBg,
             transform: [{ scale: pulseAnim }],
             opacity: pulseOpacity,
           },
@@ -89,14 +94,48 @@ export const SOSButton = ({
         onPress={onPress}
         disabled={disabled}
         accessibilityRole="button"
-        accessibilityLabel="Emergency SOS button. Tap to start emergency report."
-        accessibilityHint="Navigates to the Send SOS screen"
-        style={[styles.button, shadows.sosGlow]}
+        accessibilityLabel={
+          testMode
+            ? 'Test Mode SOS button. Tap to start simulation drill.'
+            : 'Emergency SOS button. Tap to start emergency report.'
+        }
+        accessibilityHint="Navigates to emergency confirmation screen"
+        style={[
+          styles.button,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: buttonBg,
+          },
+          shadows.sosGlow,
+        ]}
       >
-        <View style={styles.innerRing}>
-          <Text style={styles.icon}>🚨</Text>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>{subtitle}</Text>
+        <View
+          style={[
+            styles.innerRing,
+            {
+              width: size - 24,
+              height: size - 24,
+              borderRadius: (size - 24) / 2,
+              backgroundColor: ringBg,
+              borderColor: ringBorder,
+            },
+          ]}
+        >
+          {testMode ? (
+            <View style={styles.testBadge}>
+              <Text style={styles.testBadgeText}>DRILL MODE</Text>
+            </View>
+          ) : null}
+
+          <Text style={styles.icon}>{testMode ? '🧪' : '🚨'}</Text>
+          <Text style={[styles.title, { color: testMode ? colors.infoDark : colors.primaryDark }]}>
+            {title}
+          </Text>
+          <Text style={[styles.subtitle, { color: testMode ? colors.infoDark : colors.primaryDark }]}>
+            {subtitle}
+          </Text>
         </View>
       </TouchableOpacity>
     </View>
@@ -108,48 +147,46 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: 24,
-    width: 220,
-    height: 220,
-    alignSelf: 'center',
+    height: 250,
   },
   pulseRing: {
     position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: colors.primaryLight,
-    borderWidth: 2,
-    borderColor: colors.primaryBorder,
   },
   button: {
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#FFFFFF',
   },
   innerRing: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    borderWidth: 2,
+    padding: 12,
   },
-  icon: {
-    fontSize: 28,
+  testBadge: {
+    backgroundColor: '#3B82F6',
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     marginBottom: 4,
   },
-  title: {
-    fontSize: 34,
-    fontWeight: '900',
+  testBadgeText: {
     color: '#FFFFFF',
-    letterSpacing: 2,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  icon: {
+    fontSize: 32,
+    marginBottom: 2,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: 1.5,
   },
   subtitle: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FEE2E2',
     letterSpacing: 0.8,
     marginTop: 2,
     textAlign: 'center',

@@ -6,32 +6,28 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { colors, borderRadius, spacing } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
+import { borderRadius, spacing, typography } from '../utils/theme';
 
 /**
  * PrimaryButton Component
  *
- * Versatile accessible action button supporting emergency danger, primary,
- * secondary, and outlined styles.
- *
- * @param {string} title - Button label text
- * @param {Function} onPress - Press callback handler
- * @param {'danger' | 'primary' | 'secondary' | 'outline'} [variant='primary'] - Style variant
- * @param {boolean} [loading=false] - Whether to show loading spinner
- * @param {boolean} [disabled=false] - Whether the button is disabled
- * @param {string} [icon] - Optional leading emoji or icon
- * @param {object} [style] - Custom container style overrides
+ * Emergency-grade action button supporting multiple visual variants,
+ * loading states, leading icons, and full accessible touch target sizing (min 48dp).
  */
 export const PrimaryButton = ({
   title,
   onPress,
-  variant = 'primary',
+  variant = 'primary', // 'primary' | 'danger' | 'success' | 'warning' | 'secondary' | 'outline' | 'navy'
   loading = false,
   disabled = false,
   icon,
   style,
+  textStyle,
+  size = 'md', // 'sm' | 'md' | 'lg'
 }) => {
-  // Compute variant-specific background and text styling
+  const { colors, isDark } = useTheme();
+
   const getVariantStyles = () => {
     switch (variant) {
       case 'danger':
@@ -40,14 +36,42 @@ export const PrimaryButton = ({
             backgroundColor: colors.primary,
             borderColor: colors.primaryDark,
           },
-          text: { color: colors.textLight },
+          text: { color: '#FFFFFF' },
+          spinnerColor: '#FFFFFF',
+        };
+      case 'success':
+        return {
+          container: {
+            backgroundColor: colors.success,
+            borderColor: colors.successDark,
+          },
+          text: { color: '#FFFFFF' },
+          spinnerColor: '#FFFFFF',
+        };
+      case 'warning':
+        return {
+          container: {
+            backgroundColor: colors.warning,
+            borderColor: colors.warningDark,
+          },
+          text: { color: '#FFFFFF' },
+          spinnerColor: '#FFFFFF',
+        };
+      case 'navy':
+        return {
+          container: {
+            backgroundColor: colors.navyDark || '#0B1120',
+            borderColor: colors.navy || '#1E293B',
+          },
+          text: { color: '#FFFFFF' },
           spinnerColor: '#FFFFFF',
         };
       case 'secondary':
         return {
           container: {
             backgroundColor: colors.surfaceSubtle,
-            borderColor: colors.border,
+            borderColor: colors.borderDark,
+            borderWidth: 1,
           },
           text: { color: colors.textPrimary },
           spinnerColor: colors.textPrimary,
@@ -69,13 +93,42 @@ export const PrimaryButton = ({
             backgroundColor: colors.info,
             borderColor: colors.infoDark,
           },
-          text: { color: colors.textLight },
+          text: { color: '#FFFFFF' },
           spinnerColor: '#FFFFFF',
         };
     }
   };
 
   const currentVariant = getVariantStyles();
+
+  const getSizeStyles = () => {
+    switch (size) {
+      case 'sm':
+        return {
+          minHeight: 40,
+          paddingVertical: spacing.xs + 2,
+          paddingHorizontal: spacing.md,
+          fontSize: 13,
+        };
+      case 'lg':
+        return {
+          minHeight: 56,
+          paddingVertical: spacing.md,
+          paddingHorizontal: spacing.xl,
+          fontSize: 17,
+        };
+      case 'md':
+      default:
+        return {
+          minHeight: 48,
+          paddingVertical: spacing.sm + 2,
+          paddingHorizontal: spacing.lg,
+          fontSize: 15,
+        };
+    }
+  };
+
+  const sizeStyle = getSizeStyles();
 
   return (
     <TouchableOpacity
@@ -88,6 +141,11 @@ export const PrimaryButton = ({
       style={[
         styles.button,
         currentVariant.container,
+        {
+          minHeight: sizeStyle.minHeight,
+          paddingVertical: sizeStyle.paddingVertical,
+          paddingHorizontal: sizeStyle.paddingHorizontal,
+        },
         (disabled || loading) && styles.disabled,
         style,
       ]}
@@ -98,45 +156,47 @@ export const PrimaryButton = ({
           color={currentVariant.spinnerColor}
           style={styles.spinner}
         />
-      ) : (
-        <View style={styles.contentRow}>
-          {icon ? <Text style={styles.icon}>{icon}</Text> : null}
-          <Text style={[styles.text, currentVariant.text]}>{title}</Text>
-        </View>
-      )}
+      ) : null}
+
+      {!loading && icon ? (
+        <Text style={styles.icon}>{icon}</Text>
+      ) : null}
+
+      <Text
+        style={[
+          styles.text,
+          currentVariant.text,
+          { fontSize: sizeStyle.fontSize },
+          textStyle,
+        ]}
+      >
+        {title}
+      </Text>
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
   button: {
-    height: 52,
     borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    marginVertical: spacing.xs,
     borderWidth: 1,
-  },
-  contentRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  text: {
+    ...typography.buttonText,
+    textAlign: 'center',
+  },
   icon: {
-    fontSize: 18,
+    fontSize: 16,
     marginRight: spacing.sm,
   },
-  text: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
   spinner: {
-    paddingVertical: 2,
+    marginRight: spacing.sm,
   },
   disabled: {
-    opacity: 0.55,
+    opacity: 0.5,
   },
 });
 

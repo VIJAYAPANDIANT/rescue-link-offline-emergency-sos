@@ -11,22 +11,36 @@ import {
   Modal,
   Switch,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { ContactRepository } from '../database/contactRepository';
 import { apiClient } from '../services/api/apiClient';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { EmptyState } from '../components/EmptyState';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
+import { InfoBanner } from '../components/InfoBanner';
+import { ConfirmationModal } from '../components/ConfirmationModal';
+import { spacing, borderRadius, typography, shadows } from '../utils/theme';
 
+/**
+ * EmergencyContactsScreen
+ *
+ * Professional emergency contact registry:
+ * - Priority-based dispatch ordering (Primary, Secondary, Standard)
+ * - Per-contact enabled/disabled status toggle
+ * - Email and SMS notification delivery preferences
+ * - Explicit privacy & consent guarantee (Zero unauthorized address book access)
+ */
 export const EmergencyContactsScreen = ({ navigation }) => {
   const { user, isAuthenticated } = useAuth();
+  const { colors, isDark } = useTheme();
+
   const [contacts, setContacts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingContact, setEditingContact] = useState(null);
+  const [deletingContact, setDeletingContact] = useState(null);
 
   // Form State
   const [name, setName] = useState('');
@@ -39,11 +53,9 @@ export const EmergencyContactsScreen = ({ navigation }) => {
   const loadContacts = useCallback(async () => {
     setIsLoading(true);
     try {
-      // 1. Load instantly from local SQLite
       const localContacts = await ContactRepository.getAllContacts(user?.id);
-      setContacts(localContacts);
+      setContacts(localContacts || []);
 
-      // 2. If authenticated, fetch latest from server and merge into SQLite
       if (isAuthenticated) {
         const response = await apiClient.getContacts();
         if (response.success && Array.isArray(response.data)) {
@@ -56,7 +68,7 @@ export const EmergencyContactsScreen = ({ navigation }) => {
             }))
           );
           const refreshed = await ContactRepository.getAllContacts(user?.id);
-          setContacts(refreshed);
+          setContacts(refreshed || []);
         }
       }
     } catch (err) {
@@ -75,7 +87,7 @@ export const EmergencyContactsScreen = ({ navigation }) => {
     setName('');
     setPhone('');
     setEmail('');
-    setRelationship('Emergency Contact');
+    setRelationship('Family / Rescuer');
     setPriority(1);
     setFormError(null);
     setModalVisible(true);
@@ -95,7 +107,6 @@ export const EmergencyContactsScreen = ({ navigation }) => {
   const handleSaveContact = async () => {
     setFormError(null);
 
-    // Validation
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length < 2 || trimmedName.length > 60) {
       setFormError('Contact name must be between 2 and 60 characters.');
@@ -138,7 +149,6 @@ export const EmergencyContactsScreen = ({ navigation }) => {
       };
 
       if (editingContact) {
-        // Edit flow
         const contactId = editingContact.contactId || editingContact.id;
         await ContactRepository.upsertContact({
           ...payload,
@@ -148,12 +158,9 @@ export const EmergencyContactsScreen = ({ navigation }) => {
         });
 
         if (isAuthenticated) {
-          apiClient.updateContact(contactId, payload).catch((e) =>
-            console.warn('[Contacts] Cloud update warning:', e.message)
-          );
+          apiClient.updateContact(contactId, payload).catch(() => {});
         }
       } else {
-        // Create flow
         const localId = `contact_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         let finalId = localId;
 
@@ -196,297 +203,388 @@ export const EmergencyContactsScreen = ({ navigation }) => {
       );
 
       if (isAuthenticated) {
-        apiClient.updateContact(contactId, { isEnabled: nextState }).catch((e) =>
-          console.warn('[Contacts] Enabled toggle sync warning:', e.message)
-        );
+        apiClient.updateContact(contactId, { isEnabled: nextState }).catch(() => {});
       }
-    } catch (err) {
-      Alert.alert('Error', 'Unable to toggle contact status: ' + err.message);
+    } catch (e) {
+      console.warn('[Contacts] Toggle error:', e.message);
     }
   };
 
-  const handleDeleteContact = (contact) => {
-    const contactId = contact.contactId || contact.id;
+  const handleConfirmDelete = async () => {
+    if (!deletingContact) return;
+    const contactId = deletingContact.contactId || deletingContact.id;
 
-    Alert.alert(
-      'Delete Emergency Contact',
-      `Are you sure you want to remove ${contact.name} from your emergency contacts list?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await ContactRepository.deleteContact(contactId);
-              setContacts((prev) =>
-                prev.filter((c) => c.contactId !== contactId && c.id !== contactId)
-              );
+    try {
+      await ContactRepository.deleteContact(contactId);
+      setContacts((prev) => prev.filter((c) => (c.contactId || c.id) !== contactId));
 
-              if (isAuthenticated) {
-                apiClient.deleteContact(contactId).catch((e) =>
-                  console.warn('[Contacts] Cloud deletion warning:', e.message)
-                );
-              }
-            } catch (err) {
-              Alert.alert('Error', 'Failed to delete contact: ' + err.message);
-            }
-          },
-        },
-      ]
-    );
+      if (isAuthenticated) {
+        apiClient.deleteContact(contactId).catch(() => {});
+      }
+      setDeletingContact(null);
+    } catch (e) {
+      Alert.alert('Delete Error', e.message);
+    }
   };
 
-  const getPriorityLabel = (p) => {
-    switch (p) {
+  const getPriorityBadge = (p) => {
+    switch (Number(p)) {
       case 1:
-        return { label: 'Primary (Priority 1)', color: colors.danger, bg: '#FEE2E2' };
+        return {
+          label: 'Priority 1 (Primary)',
+          bg: isDark ? '#450A0A' : '#FEE2E2',
+          border: isDark ? '#B91C1C' : '#FCA5A5',
+          color: isDark ? '#F87171' : '#B91C1C',
+        };
       case 2:
-        return { label: 'Secondary (Priority 2)', color: colors.warning, bg: '#FEF3C7' };
+        return {
+          label: 'Priority 2 (Secondary)',
+          bg: isDark ? '#451A03' : '#FEF3C7',
+          border: isDark ? '#B45309' : '#FDE68A',
+          color: isDark ? '#FBBF24' : '#B45309',
+        };
+      case 3:
       default:
-        return { label: 'Standard (Priority 3)', color: colors.info, bg: '#E0F2FE' };
+        return {
+          label: 'Priority 3 (Standard)',
+          bg: isDark ? '#172554' : '#EFF6FF',
+          border: isDark ? '#1D4ED8' : '#93C5FD',
+          color: isDark ? '#60A5FA' : '#1D4ED8',
+        };
     }
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-        >
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.screenTitle}>Emergency Contacts</Text>
-          <Text style={styles.screenSubtitle}>
-            People notified when an SOS alert is triggered
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={styles.addIconButton}
-          onPress={openAddModal}
-          accessibilityRole="button"
-          accessibilityLabel="Add Contact"
-        >
-          <Text style={styles.addIconText}>＋</Text>
-        </TouchableOpacity>
-      </View>
-
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Info Banner */}
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoBannerIcon}>🛡️</Text>
-          <Text style={styles.infoBannerText}>
-            Contacts are stored locally in SQLite and synchronized securely with your authenticated account. No access to your phone’s address book is required.
-          </Text>
-        </View>
-
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>Loading contacts...</Text>
-          </View>
-        ) : contacts.length === 0 ? (
-          <EmptyState
-            icon="👥"
-            title="No Emergency Contacts Saved"
-            description="Add trusted family members, friends, or medical professionals. When you trigger an SOS, RescueLink automatically alerts enabled contacts."
-            actionLabel="Add Your First Contact"
-            onAction={openAddModal}
-          />
-        ) : (
-          contacts.map((contact) => {
-            const prioMeta = getPriorityLabel(contact.priority);
-            return (
-              <View
-                key={contact.contactId || contact.id}
-                style={[
-                  styles.contactCard,
-                  shadows.card,
-                  !contact.isEnabled && styles.disabledCard,
-                ]}
-              >
-                <View style={styles.cardTopRow}>
-                  <View style={styles.contactMainInfo}>
-                    <Text style={styles.contactName}>{contact.name}</Text>
-                    <Text style={styles.contactRelationship}>
-                      {contact.relationship}
-                    </Text>
-                  </View>
-                  <View style={styles.toggleRow}>
-                    <Text style={styles.toggleLabel}>
-                      {contact.isEnabled ? 'Active' : 'Muted'}
-                    </Text>
-                    <Switch
-                      value={contact.isEnabled}
-                      onValueChange={() => handleToggleEnabled(contact)}
-                      trackColor={{ false: colors.borderDark, true: colors.success }}
-                      thumbColor="#FFFFFF"
-                    />
-                  </View>
-                </View>
-
-                {/* Priority Badge */}
-                <View style={styles.badgeContainer}>
-                  <View style={[styles.priorityBadge, { backgroundColor: prioMeta.bg }]}>
-                    <Text style={[styles.priorityBadgeText, { color: prioMeta.color }]}>
-                      {prioMeta.label}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Contact Channels */}
-                <View style={styles.channelsSection}>
-                  {contact.phone ? (
-                    <View style={styles.channelRow}>
-                      <Text style={styles.channelIcon}>📞</Text>
-                      <Text style={styles.channelValue}>{contact.phone}</Text>
-                    </View>
-                  ) : null}
-                  {contact.email ? (
-                    <View style={styles.channelRow}>
-                      <Text style={styles.channelIcon}>✉️</Text>
-                      <Text style={styles.channelValue}>{contact.email}</Text>
-                    </View>
-                  ) : null}
-                </View>
-
-                {/* Card Actions */}
-                <View style={styles.cardActionsRow}>
-                  <TouchableOpacity
-                    style={styles.actionBtn}
-                    onPress={() => openEditModal(contact)}
-                  >
-                    <Text style={styles.actionBtnText}>✏️ Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.deleteBtn]}
-                    onPress={() => handleDeleteContact(contact)}
-                  >
-                    <Text style={[styles.actionBtnText, styles.deleteBtnText]}>
-                      🗑️ Delete
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
-
-      {/* Add / Edit Contact Modal */}
-      <Modal
-        visible={modalVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <SafeAreaView style={styles.modalOverlay}>
-          <View style={[styles.modalCard, shadows.cardElevated]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingContact ? 'Edit Emergency Contact' : 'Add Emergency Contact'}
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={[styles.screenTitle, { color: colors.textPrimary }]}>
+                Emergency Contacts
               </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
+              <Text style={[styles.screenSubtitle, { color: colors.textSecondary }]}>
+                Automated SMS/Email notification recipients ({contacts.length} saved)
+              </Text>
             </View>
 
-            {formError ? (
-              <View style={styles.formErrorBox}>
-                <Text style={styles.formErrorText}>{formError}</Text>
-              </View>
-            ) : null}
+            <PrimaryButton
+              title="+ Add"
+              onPress={openAddModal}
+              variant="primary"
+              size="sm"
+            />
+          </View>
+        </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.fieldLabel}>FULL NAME *</Text>
-              <TextInput
-                style={styles.inputField}
-                placeholder="e.g. Jane Doe"
-                placeholderTextColor={colors.textMuted}
-                value={name}
-                onChangeText={setName}
-                maxLength={60}
-              />
+        {/* Privacy & Consent Notice Banner */}
+        <InfoBanner
+          variant="info"
+          icon="🛡️"
+          title="Privacy & Permission Guarantee"
+          message="RescueLink never accesses your phone's address book without permission. Contacts are stored securely in local SQLite and notified only when you actively trigger an emergency SOS."
+          style={{ marginHorizontal: spacing.lg }}
+        />
 
-              <Text style={styles.fieldLabel}>PHONE NUMBER (FOR SMS)</Text>
-              <TextInput
-                style={styles.inputField}
-                placeholder="e.g. +14155552671"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="phone-pad"
-                value={phone}
-                onChangeText={setPhone}
-                maxLength={20}
-              />
+        {/* Contacts List */}
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={colors.info} />
+            <Text style={[styles.loadingText, { color: colors.textMuted }]}>
+              Loading emergency contacts from SQLite...
+            </Text>
+          </View>
+        ) : contacts.length > 0 ? (
+          <View style={styles.contactsList}>
+            {contacts.map((contact) => {
+              const priBadge = getPriorityBadge(contact.priority);
+              const contactId = contact.contactId || contact.id;
 
-              <Text style={styles.fieldLabel}>EMAIL ADDRESS (FOR EMAIL ALERTS)</Text>
-              <TextInput
-                style={styles.inputField}
-                placeholder="e.g. contact@example.com"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={email}
-                onChangeText={setEmail}
-                maxLength={80}
-              />
+              return (
+                <View
+                  key={contactId}
+                  style={[
+                    styles.contactCard,
+                    {
+                      backgroundColor: colors.cardBackground,
+                      borderColor: contact.isEnabled ? colors.border : colors.borderDark,
+                      opacity: contact.isEnabled ? 1 : 0.65,
+                    },
+                    shadows.card,
+                  ]}
+                >
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.nameSection}>
+                      <Text style={[styles.contactName, { color: colors.textPrimary }]}>
+                        {contact.name}
+                      </Text>
+                      <Text style={[styles.relationshipText, { color: colors.textMuted }]}>
+                        {contact.relationship || 'Emergency Contact'}
+                      </Text>
+                    </View>
 
-              <Text style={styles.fieldLabel}>RELATIONSHIP</Text>
-              <TextInput
-                style={styles.inputField}
-                placeholder="e.g. Spouse, Parent, Doctor, Colleague"
-                placeholderTextColor={colors.textMuted}
-                value={relationship}
-                onChangeText={setRelationship}
-                maxLength={40}
-              />
+                    <View style={styles.toggleSection}>
+                      <Switch
+                        value={contact.isEnabled}
+                        onValueChange={() => handleToggleEnabled(contact)}
+                        trackColor={{ false: colors.borderDark, true: colors.success }}
+                        thumbColor="#FFFFFF"
+                        accessibilityLabel={`Toggle notification for ${contact.name}`}
+                      />
+                    </View>
+                  </View>
 
-              <Text style={styles.fieldLabel}>ALERT PRIORITY</Text>
-              <View style={styles.prioritySelector}>
-                {[
-                  { val: 1, label: '1 - Primary' },
-                  { val: 2, label: '2 - Secondary' },
-                  { val: 3, label: '3 - Standard' },
-                ].map((item) => (
-                  <TouchableOpacity
-                    key={item.val}
-                    style={[
-                      styles.prioOption,
-                      priority === item.val && styles.prioOptionActive,
-                    ]}
-                    onPress={() => setPriority(item.val)}
-                  >
-                    <Text
+                  {/* Priority & Channel Badges */}
+                  <View style={styles.badgeRow}>
+                    <View
                       style={[
-                        styles.prioOptionText,
-                        priority === item.val && styles.prioOptionTextActive,
+                        styles.priorityPill,
+                        {
+                          backgroundColor: priBadge.bg,
+                          borderColor: priBadge.border,
+                        },
                       ]}
                     >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <Text style={[styles.priorityPillText, { color: priBadge.color }]}>
+                        {priBadge.label}
+                      </Text>
+                    </View>
+
+                    {contact.phone ? (
+                      <View style={[styles.channelPill, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}>
+                        <Text style={[styles.channelPillText, { color: colors.textSecondary }]}>
+                          📱 SMS: {contact.phone}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {contact.email ? (
+                      <View style={[styles.channelPill, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}>
+                        <Text style={[styles.channelPillText, { color: colors.textSecondary }]}>
+                          ✉️ Email: {contact.email}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {/* Actions Footer */}
+                  <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() => openEditModal(contact)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit contact ${contact.name}`}
+                    >
+                      <Text style={[styles.actionBtnText, { color: colors.info }]}>
+                        ✏️ Edit Contact
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={() => setDeletingContact(contact)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete contact ${contact.name}`}
+                    >
+                      <Text style={[styles.actionBtnText, { color: colors.primary }]}>
+                        🗑️ Delete
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <EmptyState
+            icon="👥"
+            title="No Contacts Configured"
+            description="Add trusted family, colleagues, or local search-and-rescue teams who should receive automated distress notifications."
+            actionLabel="+ Add First Contact"
+            onAction={openAddModal}
+            style={{ marginHorizontal: spacing.lg }}
+          />
+        )}
+
+        {/* Add / Edit Contact Modal */}
+        <Modal
+          transparent
+          animationType="fade"
+          visible={modalVisible}
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <View style={[styles.modalBackdrop, { backgroundColor: colors.overlayBackground }]}>
+            <View
+              style={[
+                styles.modalCard,
+                {
+                  backgroundColor: colors.cardBackground,
+                  borderColor: colors.border,
+                },
+                shadows.modal,
+              ]}
+            >
+              <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                  {editingContact ? 'Edit Emergency Contact' : 'Add Emergency Contact'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setModalVisible(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close modal"
+                >
+                  <Text style={[styles.closeIcon, { color: colors.textMuted }]}>✕</Text>
+                </TouchableOpacity>
               </View>
 
-              <View style={styles.modalActionButtons}>
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                {formError ? (
+                  <View style={[styles.formErrorBox, { backgroundColor: colors.primaryLight, borderColor: colors.primaryBorder }]}>
+                    <Text style={[styles.formErrorText, { color: colors.primaryDark }]}>
+                      ⚠️ {formError}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Name Input */}
+                <View style={styles.modalInputGroup}>
+                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>FULL NAME *</Text>
+                  <TextInput
+                    style={[styles.modalInput, { backgroundColor: colors.surfaceSubtle, borderColor: colors.borderDark, color: colors.textPrimary }]}
+                    value={name}
+                    onChangeText={setName}
+                    placeholder="e.g. John Doe"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="words"
+                    accessibilityLabel="Full name input"
+                  />
+                </View>
+
+                {/* Phone Input */}
+                <View style={styles.modalInputGroup}>
+                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>PHONE NUMBER (SMS)</Text>
+                  <TextInput
+                    style={[styles.modalInput, { backgroundColor: colors.surfaceSubtle, borderColor: colors.borderDark, color: colors.textPrimary }]}
+                    value={phone}
+                    onChangeText={setPhone}
+                    placeholder="e.g. +1 (555) 234-5678"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="phone-pad"
+                    accessibilityLabel="Phone number input"
+                  />
+                </View>
+
+                {/* Email Input */}
+                <View style={styles.modalInputGroup}>
+                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>EMAIL ADDRESS</Text>
+                  <TextInput
+                    style={[styles.modalInput, { backgroundColor: colors.surfaceSubtle, borderColor: colors.borderDark, color: colors.textPrimary }]}
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="e.g. rescuer@example.com"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    accessibilityLabel="Email address input"
+                  />
+                </View>
+
+                {/* Relationship Input */}
+                <View style={styles.modalInputGroup}>
+                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>RELATIONSHIP / ROLE</Text>
+                  <TextInput
+                    style={[styles.modalInput, { backgroundColor: colors.surfaceSubtle, borderColor: colors.borderDark, color: colors.textPrimary }]}
+                    value={relationship}
+                    onChangeText={setRelationship}
+                    placeholder="e.g. Brother, Local Clinic, Leader"
+                    placeholderTextColor={colors.textMuted}
+                    accessibilityLabel="Relationship input"
+                  />
+                </View>
+
+                {/* Priority Selector */}
+                <View style={styles.modalInputGroup}>
+                  <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>NOTIFICATION PRIORITY</Text>
+                  <View style={styles.prioritySelectorRow}>
+                    {[1, 2, 3].map((p) => {
+                      const isSel = Number(priority) === p;
+                      const pLabel = p === 1 ? '1 - Primary' : p === 2 ? '2 - Secondary' : '3 - Standard';
+                      return (
+                        <TouchableOpacity
+                          key={p}
+                          style={[
+                            styles.priorityOption,
+                            {
+                              backgroundColor: isSel
+                                ? colors.navyDark
+                                : (isDark ? colors.surfaceSubtle : colors.cardBackground),
+                              borderColor: isSel ? colors.navy : colors.borderDark,
+                            },
+                          ]}
+                          onPress={() => setPriority(p)}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: isSel }}
+                          accessibilityLabel={pLabel}
+                        >
+                          <Text
+                            style={[
+                              styles.priorityOptionText,
+                              { color: isSel ? '#FFFFFF' : colors.textPrimary, fontWeight: isSel ? '800' : '600' },
+                            ]}
+                          >
+                            {pLabel}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
                 <PrimaryButton
-                  title={isSaving ? 'Saving...' : editingContact ? 'Update Contact' : 'Save Contact'}
+                  title="Cancel"
+                  onPress={() => setModalVisible(false)}
+                  variant="secondary"
+                  style={{ flex: 1, marginRight: spacing.sm }}
+                />
+                <PrimaryButton
+                  title={editingContact ? 'Update Contact' : 'Save Contact'}
                   onPress={handleSaveContact}
                   variant="primary"
-                  disabled={isSaving}
+                  loading={isSaving}
+                  style={{ flex: 1.5 }}
                 />
               </View>
-            </ScrollView>
+            </View>
           </View>
-        </SafeAreaView>
-      </Modal>
+        </Modal>
+
+        {/* Delete Confirmation Modal */}
+        <ConfirmationModal
+          visible={!!deletingContact}
+          title="Delete Emergency Contact"
+          severity="danger"
+          message={`Are you sure you want to remove ${deletingContact?.name} from your emergency contacts registry?`}
+          confirmLabel="Delete Contact"
+          cancelLabel="Cancel"
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDeletingContact(null)}
+          summaryItems={
+            deletingContact
+              ? [
+                  { label: 'Name', value: deletingContact.name },
+                  { label: 'Phone', value: deletingContact.phone || 'None' },
+                  { label: 'Email', value: deletingContact.email || 'None' },
+                ]
+              : []
+          }
+        />
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -494,265 +592,186 @@ export const EmergencyContactsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
-    paddingBottom: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.cardBackground,
-  },
-  backButton: {
-    padding: spacing.xs,
-    marginRight: spacing.sm,
-  },
-  backIcon: {
-    fontSize: 24,
-    color: colors.textPrimary,
-  },
-  headerTitleContainer: {
-    flex: 1,
-  },
-  screenTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  screenSubtitle: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  addIconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addIconText: {
-    fontSize: 22,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    marginTop: -2,
   },
   scrollContent: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxl,
   },
-  infoBanner: {
+  header: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  headerRow: {
     flexDirection: 'row',
-    backgroundColor: '#EFF6FF',
-    padding: spacing.md,
-    borderRadius: borderRadius.md,
-    marginBottom: spacing.lg,
+    justifyContent: 'space-between',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
   },
-  infoBannerIcon: {
-    fontSize: 20,
-    marginRight: spacing.sm,
+  screenTitle: {
+    ...typography.header,
+    fontWeight: '800',
   },
-  infoBannerText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#1E3A8A',
-    lineHeight: 18,
+  screenSubtitle: {
+    ...typography.bodySmall,
+    marginTop: 2,
   },
   loadingContainer: {
-    paddingVertical: spacing.xxl,
+    padding: spacing.xl,
     alignItems: 'center',
+    gap: spacing.sm,
   },
   loadingText: {
-    marginTop: spacing.sm,
-    color: colors.textMuted,
-    fontSize: 14,
+    ...typography.bodySmall,
+  },
+  contactsList: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+    marginTop: spacing.xs,
   },
   contactCard: {
-    backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
-  },
-  disabledCard: {
-    opacity: 0.6,
+    padding: spacing.md,
   },
   cardTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
   },
-  contactMainInfo: {
+  nameSection: {
     flex: 1,
   },
   contactName: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    ...typography.cardTitle,
+    fontWeight: '800',
   },
-  contactRelationship: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginTop: 2,
+  relationshipText: {
+    ...typography.caption,
+    marginTop: 1,
   },
-  toggleRow: {
+  toggleSection: {
+    marginLeft: spacing.sm,
+  },
+  badgeRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginVertical: spacing.xs,
   },
-  toggleLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginRight: spacing.xs,
-  },
-  badgeContainer: {
-    marginTop: spacing.xs,
-    flexDirection: 'row',
-  },
-  priorityBadge: {
-    paddingHorizontal: 8,
+  priorityPill: {
     paddingVertical: 2,
-    borderRadius: 12,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
   },
-  priorityBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
+  priorityPillText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
-  channelsSection: {
-    marginTop: spacing.sm,
-    paddingTop: spacing.xs,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+  channelPill: {
+    paddingVertical: 2,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
   },
-  channelRow: {
+  channelPillText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  cardFooter: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
-  },
-  channelIcon: {
-    fontSize: 14,
-    marginRight: 6,
-  },
-  channelValue: {
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  cardActionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: spacing.sm,
-    paddingTop: spacing.xs,
+    paddingTop: spacing.sm,
+    marginTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
   },
   actionBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: borderRadius.sm,
-    marginLeft: spacing.sm,
-    backgroundColor: '#F3F4F6',
+    paddingVertical: spacing.xs,
   },
   actionBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    ...typography.caption,
+    fontWeight: '700',
   },
-  deleteBtn: {
-    backgroundColor: '#FEE2E2',
-  },
-  deleteBtnText: {
-    color: colors.danger,
-  },
-  modalOverlay: {
+  modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
   },
   modalCard: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    padding: spacing.lg,
-    maxHeight: '90%',
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '85%',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.md,
+    padding: spacing.md,
+    borderBottomWidth: 1,
   },
   modalTitle: {
-    fontSize: 18,
+    ...typography.cardTitle,
     fontWeight: '800',
-    color: colors.textPrimary,
   },
-  modalCloseText: {
-    fontSize: 20,
-    color: colors.textMuted,
-    padding: 4,
+  closeIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    padding: spacing.xs,
+  },
+  modalBody: {
+    padding: spacing.md,
   },
   formErrorBox: {
-    backgroundColor: '#FEE2E2',
     padding: spacing.sm,
     borderRadius: borderRadius.sm,
-    marginBottom: spacing.sm,
+    borderWidth: 1,
+    marginBottom: spacing.md,
   },
   formErrorText: {
-    color: colors.danger,
-    fontSize: 13,
+    ...typography.bodySmallBold,
   },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
+  modalInputGroup: {
+    marginBottom: spacing.md,
+  },
+  modalLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
     marginBottom: 4,
-    marginTop: spacing.sm,
   },
-  inputField: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: colors.borderDark,
+  modalInput: {
+    height: 46,
     borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    fontSize: 15,
-    color: colors.textPrimary,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    ...typography.body,
   },
-  prioritySelector: {
+  prioritySelectorRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: spacing.xs,
     marginTop: 4,
   },
-  prioOption: {
+  priorityOption: {
     flex: 1,
     paddingVertical: spacing.sm,
-    alignItems: 'center',
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.sm,
     borderWidth: 1,
-    borderColor: colors.borderDark,
-    marginHorizontal: 3,
-    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  prioOptionActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+  priorityOptionText: {
+    fontSize: 11,
   },
-  prioOptionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  prioOptionTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  modalActionButtons: {
-    marginTop: spacing.lg,
-    marginBottom: spacing.xl,
+  modalFooter: {
+    flexDirection: 'row',
+    padding: spacing.md,
+    borderTopWidth: 1,
   },
 });
+
+export default EmergencyContactsScreen;

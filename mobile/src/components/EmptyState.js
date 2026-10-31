@@ -1,20 +1,14 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, borderRadius, spacing } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
+import { borderRadius, spacing, typography } from '../utils/theme';
 import PrimaryButton from './PrimaryButton';
 
 /**
  * EmptyState Component
  *
- * Friendly empty state display for screens with no items (Nearby Devices, History).
+ * Professional empty state display for screens with no items (Nearby Devices, History, Outbox).
  * Avoids dead ends and guides user expectations.
- *
- * @param {string} icon - Symbol / emoji illustration
- * @param {string} title - Main heading for the empty state
- * @param {string} description - Explanation of why the state is empty
- * @param {string} [actionLabel] - Optional button label
- * @param {Function} [onAction] - Optional button press callback
- * @param {string} [badgeText] - Optional status badge (e.g. "Step 3 Planned")
  */
 export const EmptyState = ({
   icon = '📭',
@@ -23,21 +17,52 @@ export const EmptyState = ({
   actionLabel,
   onAction,
   badgeText,
+  style,
 }) => {
+  const { colors, isDark } = useTheme();
+
   return (
-    <View style={styles.container}>
-      <View style={styles.iconCircle}>
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: colors.cardBackground,
+          borderColor: colors.border,
+        },
+        style,
+      ]}
+      accessibilityRole="text"
+      accessibilityLabel={`${title}. ${description}`}
+    >
+      <View
+        style={[
+          styles.iconCircle,
+          { backgroundColor: isDark ? colors.surfaceSubtle : colors.surfaceSubtle },
+        ]}
+      >
         <Text style={styles.icon}>{icon}</Text>
       </View>
 
       {badgeText ? (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{badgeText}</Text>
+        <View
+          style={[
+            styles.badge,
+            {
+              backgroundColor: isDark ? '#172554' : colors.infoLight,
+              borderColor: isDark ? '#1D4ED8' : colors.infoBorder,
+            },
+          ]}
+        >
+          <Text style={[styles.badgeText, { color: isDark ? '#60A5FA' : colors.infoDark }]}>
+            {badgeText}
+          </Text>
         </View>
       ) : null}
 
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.description}>{description}</Text>
+      <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
+      <Text style={[styles.description, { color: colors.textSecondary }]}>
+        {description}
+      </Text>
 
       {actionLabel && onAction ? (
         <PrimaryButton
@@ -55,58 +80,49 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.xxl,
-    marginVertical: spacing.lg,
-    backgroundColor: colors.cardBackground,
+    padding: spacing.xl,
+    marginVertical: spacing.md,
     borderRadius: borderRadius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
   },
   iconCircle: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.surfaceSubtle,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,
   },
   icon: {
-    fontSize: 32,
+    fontSize: 30,
   },
   badge: {
-    backgroundColor: colors.infoLight,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
+    borderRadius: borderRadius.full,
     marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: colors.infoBorder,
   },
   badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.infoDark,
+    ...typography.caption,
+    fontWeight: '800',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   title: {
-    fontSize: 17,
+    ...typography.cardTitle,
     fontWeight: '700',
-    color: colors.textPrimary,
     textAlign: 'center',
     marginBottom: spacing.xs,
   },
   description: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
     textAlign: 'center',
-    lineHeight: 19,
-    maxWidth: 300,
+    lineHeight: 18,
+    maxWidth: 280,
   },
   actionButton: {
-    marginTop: spacing.lg,
-    minWidth: 160,
+    marginTop: spacing.md,
+    minWidth: 140,
   },
 });
 

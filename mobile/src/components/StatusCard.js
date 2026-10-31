@@ -1,57 +1,56 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { colors, shadows, borderRadius, spacing } from '../utils/theme';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
+import { shadows, borderRadius, spacing, typography } from '../utils/theme';
 
 /**
  * StatusCard Component
  *
- * Displays a system status item (e.g., Bluetooth, Cellular/Internet, GPS Location)
- * with color-coded visual indicators.
- *
- * @param {string} title - Label for the subsystem (e.g. "Bluetooth Mesh")
- * @param {string} value - Current status text (e.g. "BLE Standby")
- * @param {string} icon - Symbol or emoji representing the status
- * @param {'info' | 'success' | 'warning' | 'danger'} variant - Color scheme variant
- * @param {string} [subtitle] - Optional descriptive note
+ * Displays a system status item (e.g., Bluetooth, Connectivity, GPS Location, Outbox Sync)
+ * with accessible icon glyphs, text status pills, and optional action buttons.
  */
 export const StatusCard = ({
   title,
   value,
   icon = '📡',
-  variant = 'info',
+  variant = 'info', // 'info' | 'success' | 'warning' | 'danger'
   subtitle,
+  actionLabel,
+  onAction,
+  style,
 }) => {
-  // Determine color palette based on variant
+  const { colors, isDark } = useTheme();
+
   const getBadgeColors = () => {
     switch (variant) {
       case 'success':
         return {
-          bg: colors.successLight,
-          text: colors.successDark,
+          bg: isDark ? '#052E16' : '#DCFCE7',
+          text: isDark ? '#4ADE80' : '#15803D',
           dot: colors.success,
-          border: colors.successBorder,
+          border: isDark ? '#15803D' : '#86EFAC',
         };
       case 'warning':
         return {
-          bg: colors.warningLight,
-          text: colors.warningDark,
+          bg: isDark ? '#451A03' : '#FEF3C7',
+          text: isDark ? '#FBBF24' : '#B45309',
           dot: colors.warning,
-          border: colors.warningBorder,
+          border: isDark ? '#B45309' : '#FDE68A',
         };
       case 'danger':
         return {
-          bg: colors.primaryLight,
-          text: colors.primaryDark,
+          bg: isDark ? '#450A0A' : '#FEE2E2',
+          text: isDark ? '#F87171' : '#B91C1C',
           dot: colors.primary,
-          border: colors.primaryBorder,
+          border: isDark ? '#B91C1C' : '#FCA5A5',
         };
       case 'info':
       default:
         return {
-          bg: colors.infoLight,
-          text: colors.infoDark,
+          bg: isDark ? '#172554' : '#EFF6FF',
+          text: isDark ? '#60A5FA' : '#1D4ED8',
           dot: colors.info,
-          border: colors.infoBorder,
+          border: isDark ? '#1D4ED8' : '#93C5FD',
         };
     }
   };
@@ -59,11 +58,23 @@ export const StatusCard = ({
   const badgeTheme = getBadgeColors();
 
   return (
-    <View style={[styles.card, shadows.card]}>
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.cardBackground,
+          borderColor: colors.border,
+        },
+        shadows.card,
+        style,
+      ]}
+      accessibilityRole="summary"
+      accessibilityLabel={`${title}: ${value}. ${subtitle || ''}`}
+    >
       <View style={styles.headerRow}>
         <View style={styles.titleGroup}>
           <Text style={styles.icon}>{icon}</Text>
-          <Text style={styles.title}>{title}</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
         </View>
 
         {/* Status Pill Badge */}
@@ -84,7 +95,29 @@ export const StatusCard = ({
       </View>
 
       {subtitle ? (
-        <Text style={styles.subtitle}>{subtitle}</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          {subtitle}
+        </Text>
+      ) : null}
+
+      {actionLabel && onAction ? (
+        <TouchableOpacity
+          style={[
+            styles.actionBtn,
+            {
+              borderColor: colors.borderDark,
+              backgroundColor: isDark ? colors.surfaceSubtle : colors.surfaceSubtle,
+            },
+          ]}
+          activeOpacity={0.8}
+          onPress={onAction}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+        >
+          <Text style={[styles.actionBtnText, { color: colors.infoDark || colors.info }]}>
+            {actionLabel}
+          </Text>
+        </TouchableOpacity>
       ) : null}
     </View>
   );
@@ -92,17 +125,16 @@ export const StatusCard = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.lg,
-    padding: spacing.lg,
+    padding: spacing.md,
     marginVertical: spacing.xs,
     borderWidth: 1,
-    borderColor: colors.border,
   },
   headerRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
   },
   titleGroup: {
     flexDirection: 'row',
@@ -115,33 +147,43 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   title: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
+    ...typography.cardTitle,
+    fontWeight: '700',
   },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
+    borderRadius: borderRadius.full,
+    paddingVertical: spacing.xs - 1,
+    paddingHorizontal: spacing.sm,
     borderWidth: 1,
   },
   statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     marginRight: 6,
   },
   badgeText: {
-    fontSize: 12,
+    ...typography.caption,
     fontWeight: '700',
   },
   subtitle: {
-    fontSize: 12,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
+    marginTop: 2,
+    lineHeight: 18,
+  },
+  actionBtn: {
     marginTop: spacing.sm,
-    lineHeight: 16,
+    alignSelf: 'flex-start',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+  },
+  actionBtnText: {
+    ...typography.caption,
+    fontWeight: '700',
   },
 });
 

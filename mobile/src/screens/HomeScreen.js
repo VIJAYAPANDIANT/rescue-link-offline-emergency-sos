@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,187 +6,268 @@ import {
   ScrollView,
   TouchableOpacity,
   SafeAreaView,
-  Platform,
+  RefreshControl,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { SOSButton } from '../components/SOSButton';
 import { StatusCard } from '../components/StatusCard';
+import { StatusBadge } from '../components/StatusBadge';
+import { InfoBanner } from '../components/InfoBanner';
 import { apiClient } from '../services/api/apiClient';
 import { bluetoothService, BLE_STATES } from '../services/bluetooth/bluetoothService';
 import { syncService } from '../services/sync/syncService';
 import { networkService } from '../services/network/networkService';
+import { locationService } from '../services/location/locationService';
 import { AlertRepository } from '../database';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
+import { spacing, borderRadius, typography, shadows } from '../utils/theme';
 import { APP_CONFIG, SAFETY_DISCLAIMER } from '../utils/constants';
+import { formatTimestamp } from '../utils/helpers';
 
 /**
  * HomeScreen / Emergency Dashboard
  *
- * Core emergency screen presenting:
- * - Responder Identity / JWT authentication status
- * - Immediate red SOS action trigger
- * - Real-time Bluetooth, Connectivity, GPS, and Server indicators
- * - Quick action portals to History, Nearby Devices, and Account
- * - High-visibility emergency disclaimer
+ * Professional emergency response cockpit presenting:
+ * - Prominent SOS action trigger with accessible touch target
+ * - Real-time Bluetooth availability & radio health
+ * - Internet connectivity & Reachability state
+ * - Location permission & GPS status
+ * - Pending synchronization count with immediate "Sync Now" trigger
+ * - Recent emergency activity summary
+ * - Official public safety disclaimer
  */
 export const HomeScreen = ({ navigation }) => {
   const { user, isAuthenticated } = useAuth();
+  const { colors, isDark } = useTheme();
+
+  const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState('Checking...');
   const [isServerHealthy, setIsServerHealthy] = useState(false);
+
+  // Bluetooth State
   const [bluetoothStatus, setBluetoothStatus] = useState('Checking BLE...');
   const [bleVariant, setBleVariant] = useState('info');
   const [bleSubtitle, setBleSubtitle] = useState('Verifying BLE stack...');
+
+  // Storage & Sync State
   const [storageStatus, setStorageStatus] = useState('SQLite Active');
   const [storageSubtitle, setStorageSubtitle] = useState('Local WAL persistence initialized');
   const [outboxCount, setOutboxCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState('All Synced');
   const [syncVariant, setSyncVariant] = useState('success');
-  const [syncSubtitle, setSyncSubtitle] = useState('Outbox empty · Up to date with cloud');
+  const [syncSubtitle, setSyncSubtitle] = useState('Outbox empty · Cloud is up to date');
 
-  // Check backend health, Bluetooth readiness, and SQLite status on mount
-  useEffect(() => {
-    let isMounted = true;
-    apiClient.checkHealth().then((res) => {
-      if (isMounted) {
-        if (res.success) {
-          setServerStatus('Connected (HTTP 200)');
-          setIsServerHealthy(true);
-        } else {
-          setServerStatus('Offline (Backend Unreachable)');
-          setIsServerHealthy(false);
-        }
-      }
-    });
+  // Network State
+  const [networkType, setNetworkType] = useState('Checking...');
+  const [isOnline, setIsOnline] = useState(false);
 
-    bluetoothService.checkBluetoothAvailability().then((res) => {
-      if (isMounted) {
-        if (res.supported) {
-          if (res.state === BLE_STATES.IDLE) {
-            setBluetoothStatus('BLE Ready (Powered On)');
-            setBleVariant('success');
-            setBleSubtitle('Standby · No active peer connection');
-          } else {
-            setBluetoothStatus('Bluetooth Disabled');
-            setBleVariant('warning');
-            setBleSubtitle('Enable Bluetooth in device settings');
-          }
-        } else {
-          setBluetoothStatus('Dev Build Required');
-          setBleVariant('info');
-          setBleSubtitle('Native BLE requires an Expo dev build');
-        }
-      }
-    });
+  // Location State
+  const [locationPermStatus, setLocationPermStatus] = useState('GPS Standby');
+  const [locationVariant, setLocationVariant] = useState('info');
+  const [locationSubtitle, setLocationSubtitle] = useState('Coordinates attached during SOS');
 
-    const refreshCountsAndSync = async () => {
-      try {
-        const counts = await AlertRepository.getAlertCounts();
-        if (isMounted) {
-          setStorageStatus(`SQLite Active (${counts.total} Records)`);
-          setStorageSubtitle(
-            `${counts.localCount} local, ${counts.bleCount} BLE, ${counts.pendingSyncCount} pending sync`
-          );
-        }
-      } catch (e) {
-        if (isMounted) {
-          setStorageStatus('SQLite Standby');
-          setStorageSubtitle('Local database ready');
-        }
-      }
+  // Recent Activity State
+  const [recentAlerts, setRecentAlerts] = useState([]);
 
-      try {
-        const syncState = await syncService.getSyncStatus();
-        if (isMounted) {
-          setOutboxCount(syncState.pendingCount);
-          if (syncState.isSyncing) {
-            setSyncStatusText('Syncing in Progress...');
-            setSyncVariant('info');
-            setSyncSubtitle('Uploading queued alerts to cloud server');
-          } else if (syncState.pendingCount > 0) {
-            setSyncStatusText(`${syncState.pendingCount} Pending in Outbox`);
-            setSyncVariant('warning');
-            setSyncSubtitle('Alerts will auto-upload when connectivity is confirmed');
-          } else {
-            setSyncStatusText('All Synced');
-            setSyncVariant('success');
-            setSyncSubtitle('Outbox empty · Cloud repository is up to date');
-          }
-        }
-      } catch (e) {
-        // Ignored
-      }
-    };
-
-    refreshCountsAndSync();
-
-    const unsubscribeSync = syncService.addSyncListener((state) => {
-      if (!isMounted) return;
-      setIsSyncing(state.isSyncing);
-      if (state.isSyncing) {
-        setSyncStatusText('Syncing...');
-        setSyncVariant('info');
-        setSyncSubtitle('Contacting RescueLink cloud endpoint...');
+  const refreshDashboardData = useCallback(async () => {
+    // 1. Health Ping
+    try {
+      const res = await apiClient.checkHealth();
+      if (res.success) {
+        setServerStatus('Connected (HTTP 200)');
+        setIsServerHealthy(true);
       } else {
-        refreshCountsAndSync();
+        setServerStatus('Offline (Backend Unreachable)');
+        setIsServerHealthy(false);
       }
+    } catch {
+      setServerStatus('Offline / Local Mode');
+      setIsServerHealthy(false);
+    }
+
+    // 2. Bluetooth Radio Status
+    try {
+      const bleRes = await bluetoothService.checkBluetoothAvailability();
+      if (bleRes.supported) {
+        if (bleRes.state === BLE_STATES.IDLE || bleRes.state === 'PoweredOn') {
+          setBluetoothStatus('BLE Ready (Powered On)');
+          setBleVariant('success');
+          setBleSubtitle('Central scanner & Peripheral advertiser standby');
+        } else {
+          setBluetoothStatus('Bluetooth Disabled');
+          setBleVariant('warning');
+          setBleSubtitle('Enable Bluetooth in device settings to broadcast off-grid');
+        }
+      } else {
+        setBluetoothStatus('Dev Build Required');
+        setBleVariant('info');
+        setBleSubtitle('Native BLE module requires an Expo Dev Client build');
+      }
+    } catch {
+      setBluetoothStatus('BLE Standby');
+      setBleVariant('info');
+      setBleSubtitle('Bluetooth Low Energy subsystem ready');
+    }
+
+    // 3. Network Connectivity
+    try {
+      const netState = await networkService.getNetworkState();
+      setIsOnline(!!netState.isConnected && !!netState.isInternetReachable);
+      setNetworkType(
+        netState.isConnected
+          ? `${netState.type.toUpperCase()}${netState.isInternetReachable ? ' (Internet Active)' : ' (Local Link Only)'}`
+          : 'Disconnected (Offline Mode)'
+      );
+    } catch {
+      setIsOnline(false);
+      setNetworkType('Offline / Airplane Mode');
+    }
+
+    // 4. SQLite Counts & Outbox
+    try {
+      const counts = await AlertRepository.getAlertCounts();
+      setStorageStatus(`SQLite Active (${counts.total} Records)`);
+      setStorageSubtitle(
+        `${counts.localCount} local, ${counts.bleCount} BLE, ${counts.pendingSyncCount} pending sync`
+      );
+    } catch {
+      setStorageStatus('SQLite Active');
+      setStorageSubtitle('Local database operational in WAL mode');
+    }
+
+    try {
+      const syncState = await syncService.getSyncStatus();
+      setOutboxCount(syncState.pendingCount);
+      setIsSyncing(syncState.isSyncing);
+      if (syncState.isSyncing) {
+        setSyncStatusText('Syncing in Progress...');
+        setSyncVariant('info');
+        setSyncSubtitle('Uploading queued distress records to cloud');
+      } else if (syncState.pendingCount > 0) {
+        setSyncStatusText(`${syncState.pendingCount} Pending in Outbox`);
+        setSyncVariant('warning');
+        setSyncSubtitle('Queued alerts will auto-sync once internet is reachable');
+      } else {
+        setSyncStatusText('All Synced');
+        setSyncVariant('success');
+        setSyncSubtitle('Outbox empty · Up to date with rescue servers');
+      }
+    } catch {
+      // Ignored
+    }
+
+    // 5. Recent Alerts
+    try {
+      const alerts = await AlertRepository.getAllAlerts(1, 3);
+      setRecentAlerts(alerts || []);
+    } catch {
+      setRecentAlerts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDashboardData();
+
+    const unsubscribeSync = syncService.addSyncListener(() => {
+      refreshDashboardData();
     });
 
-    const unsubscribeNet = networkService.addConnectivityListener((netState) => {
-      if (!isMounted) return;
-      if (netState.isConnected) {
-        refreshCountsAndSync();
-      }
+    const unsubscribeNet = networkService.addConnectivityListener(() => {
+      refreshDashboardData();
     });
 
-    // Also refresh when screen regains focus
-    const unsubscribeFocus = navigation.addListener ? navigation.addListener('focus', refreshCountsAndSync) : null;
+    const unsubscribeFocus = navigation.addListener ? navigation.addListener('focus', refreshDashboardData) : null;
 
     return () => {
-      isMounted = false;
       unsubscribeSync();
       unsubscribeNet();
       if (unsubscribeFocus) unsubscribeFocus();
     };
-  }, [navigation]);
+  }, [navigation, refreshDashboardData]);
 
-  const handleSOSPress = () => {
-    navigation.navigate('SendSOS');
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refreshDashboardData();
+    setRefreshing(false);
+  };
+
+  const handleManualSyncNow = async () => {
+    if (isSyncing) return;
+    try {
+      await syncService.triggerSync();
+      await refreshDashboardData();
+    } catch (e) {
+      console.warn('Manual sync trigger error:', e.message);
+    }
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
       >
-        {/* Responder Session Banner */}
+        {/* Top Session & Responder Banner */}
         <View style={styles.topBarRow}>
           {isAuthenticated && user ? (
             <TouchableOpacity
-              style={styles.responderPill}
+              style={[
+                styles.responderPill,
+                {
+                  backgroundColor: isDark ? '#052E16' : '#DCFCE7',
+                  borderColor: isDark ? '#15803D' : '#86EFAC',
+                },
+              ]}
               activeOpacity={0.8}
               onPress={() => navigation.navigate('Profile')}
+              accessibilityRole="button"
+              accessibilityLabel={`Signed in as ${user.name}`}
             >
-              <View style={styles.responderDot} />
-              <Text style={styles.responderText} numberOfLines={1}>
-                {user.name} (JWT Active)
+              <View style={[styles.responderDot, { backgroundColor: colors.success }]} />
+              <Text style={[styles.responderText, { color: isDark ? '#4ADE80' : '#15803D' }]} numberOfLines={1}>
+                {user.name} ({user.role || 'Responder'})
               </Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.guestPill}
+              style={[
+                styles.guestPill,
+                {
+                  backgroundColor: isDark ? '#1E293B' : colors.surfaceSubtle,
+                  borderColor: colors.borderDark,
+                },
+              ]}
               activeOpacity={0.8}
               onPress={() => navigation.navigate('Login')}
+              accessibilityRole="button"
+              accessibilityLabel="Guest Mode. Tap to Log In"
             >
-              <Text style={styles.guestText}>👤 Guest Mode · Tap to Log In</Text>
+              <Text style={[styles.guestText, { color: colors.textSecondary }]}>
+                👤 Guest Mode · Tap to Log In
+              </Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity
-            style={styles.profileIconBtn}
+            style={[
+              styles.profileIconBtn,
+              {
+                backgroundColor: colors.cardBackground,
+                borderColor: colors.border,
+              },
+            ]}
             onPress={() => navigation.navigate('Profile')}
-            accessibilityLabel="Account Profile"
+            accessibilityRole="button"
+            accessibilityLabel="Open Settings"
           >
             <Text style={styles.profileIconText}>⚙️</Text>
           </TouchableOpacity>
@@ -195,198 +276,234 @@ export const HomeScreen = ({ navigation }) => {
         {/* Header Branding */}
         <View style={styles.header}>
           <View style={styles.brandRow}>
-            <Text style={styles.brandBadge}>OFFLINE-READY</Text>
+            <View style={[styles.brandBadge, { backgroundColor: colors.navyDark, borderColor: colors.border }]}>
+              <Text style={styles.brandBadgeText}>OFFLINE MESH RESCUE</Text>
+            </View>
           </View>
-          <Text style={styles.appTitle}>{APP_CONFIG.APP_NAME}</Text>
-          <Text style={styles.appSubtitle}>{APP_CONFIG.APP_SUBTITLE}</Text>
+          <Text style={[styles.appTitle, { color: colors.textPrimary }]}>{APP_CONFIG.APP_NAME}</Text>
+          <Text style={[styles.appSubtitle, { color: colors.textSecondary }]}>{APP_CONFIG.APP_SUBTITLE}</Text>
         </View>
 
-        {/* Safety Disclaimer Warning Box */}
-        <View style={styles.disclaimerBox}>
-          <Text style={styles.disclaimerIcon}>⚠️</Text>
-          <View style={styles.disclaimerTextContainer}>
-            <Text style={styles.disclaimerTitle}>Emergency Protocol Notice</Text>
-            <Text style={styles.disclaimerText}>{SAFETY_DISCLAIMER.SHORT}</Text>
-          </View>
-        </View>
+        {/* Public Safety Warning Notice */}
+        <InfoBanner
+          variant="warning"
+          title="Emergency Protocol Notice"
+          message={SAFETY_DISCLAIMER.SHORT}
+          style={{ marginHorizontal: spacing.md }}
+        />
 
-        {/* Centerpiece SOS Emergency Trigger */}
+        {/* Centerpiece SOS Action Trigger */}
         <View style={styles.sosSection}>
           <SOSButton
-            onPress={handleSOSPress}
+            onPress={() => navigation.navigate('SendSOS')}
             title="SOS"
-            subtitle="TAP FOR EMERGENCY"
+            subtitle="TRIGGER EMERGENCY"
           />
-          <Text style={styles.sosHelperText}>
-            Tap to open emergency report form. Your coordinates and emergency type will be prepared.
+          <Text style={[styles.sosHelperText, { color: colors.textSecondary }]}>
+            Tap to open emergency report. Broadcasts over Bluetooth Low Energy mesh and persists in offline SQLite.
           </Text>
         </View>
 
-        {/* System Connectivity & Sensor Status */}
+        {/* System Status Indicators */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>SYSTEM STATUS</Text>
-          <Text style={styles.sectionCaption}>Offline sensors, radios, & session</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>SYSTEM READINESS</Text>
+          <Text style={[styles.sectionCaption, { color: colors.textMuted }]}>
+            Radios, storage, and synchronization status
+          </Text>
         </View>
 
-        <StatusCard
-          title="Responder Session"
-          value={isAuthenticated ? 'JWT Authenticated' : 'Guest Mode'}
-          icon="🛡️"
-          variant={isAuthenticated ? 'success' : 'warning'}
-          subtitle={
-            isAuthenticated
-              ? `Signed in as ${user.name} (${user.email})`
-              : 'Anonymous responder. Cloud synchronization requires signing in.'
-          }
-        />
+        <View style={styles.statusGrid}>
+          {/* Bluetooth Radio */}
+          <StatusCard
+            title="Bluetooth Radio"
+            value={bluetoothStatus}
+            icon="📡"
+            variant={bleVariant}
+            subtitle={bleSubtitle}
+            actionLabel={bleVariant === 'warning' ? 'Open Settings' : null}
+            onAction={() => navigation.navigate('NearbyDevices')}
+          />
 
-        <StatusCard
-          title="Bluetooth Radio"
-          value={bluetoothStatus}
-          icon="📡"
-          variant={bleVariant}
-          subtitle={bleSubtitle}
-        />
+          {/* Network Connectivity */}
+          <StatusCard
+            title="Network Connectivity"
+            value={isOnline ? 'Online & Reachable' : 'Offline / Standalone'}
+            icon="🌐"
+            variant={isOnline ? 'success' : 'warning'}
+            subtitle={networkType}
+          />
 
-        <StatusCard
-          title="SQLite Offline Storage"
-          value={storageStatus}
-          icon="💾"
-          variant="success"
-          subtitle={storageSubtitle}
-        />
+          {/* SQLite Offline Storage */}
+          <StatusCard
+            title="SQLite Offline Database"
+            value={storageStatus}
+            icon="💾"
+            variant="success"
+            subtitle={storageSubtitle}
+          />
 
-        <StatusCard
-          title="Cloud Synchronization"
-          value={syncStatusText}
-          icon="🔄"
-          variant={syncVariant}
-          subtitle={syncSubtitle}
-        />
+          {/* Cloud Sync Outbox */}
+          <StatusCard
+            title="Cloud Synchronization"
+            value={syncStatusText}
+            icon="🔄"
+            variant={syncVariant}
+            subtitle={syncSubtitle}
+            actionLabel={outboxCount > 0 ? (isSyncing ? 'Syncing...' : 'Sync Now') : null}
+            onAction={handleManualSyncNow}
+          />
+        </View>
 
-        <StatusCard
-          title="Network Connectivity"
-          value={isServerHealthy ? 'Backend Online' : 'Offline / Local Mode'}
-          icon="🌐"
-          variant={isServerHealthy ? 'success' : 'warning'}
-          subtitle={
-            isServerHealthy
-              ? 'Connected to RescueLink API (http://localhost:5000)'
-              : 'Server offline or unreachable'
-          }
-        />
-
-        <StatusCard
-          title="GPS Location Sensor"
-          value="Available on Request"
-          icon="📍"
-          variant="info"
-          subtitle="Coordinates are optional and attached only with user consent"
-        />
-
-        <StatusCard
-          title="RescueLink Server"
-          value={serverStatus}
-          icon="🖥️"
-          variant={isServerHealthy ? 'success' : 'warning'}
-          subtitle={
-            isServerHealthy
-              ? 'Local Express server responding at http://localhost:5000'
-              : 'Backend server offline or not yet started'
-          }
-        />
-
-        {/* Quick Actions Grid */}
+        {/* Recent Emergency Activity */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>QUICK ACTIONS</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>RECENT EMERGENCY ACTIVITY</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('EmergencyHistory')}
+              accessibilityRole="button"
+              accessibilityLabel="View all history records"
+            >
+              <Text style={[styles.viewAllText, { color: colors.info }]}>View All →</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {recentAlerts.length > 0 ? (
+          <View style={styles.activityContainer}>
+            {recentAlerts.map((alert) => (
+              <TouchableOpacity
+                key={alert.alertId || alert.id}
+                style={[
+                  styles.recentAlertCard,
+                  {
+                    backgroundColor: colors.cardBackground,
+                    borderColor: colors.border,
+                  },
+                  shadows.card,
+                ]}
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('EmergencyHistory')}
+                accessibilityRole="button"
+                accessibilityLabel={`Alert: ${alert.emergencyType}. Timestamp: ${formatTimestamp(alert.createdAt)}`}
+              >
+                <View style={styles.recentAlertTopRow}>
+                  <StatusBadge type="category" value={alert.emergencyType} size="sm" />
+                  <Text style={[styles.recentAlertTime, { color: colors.textMuted }]}>
+                    {formatTimestamp(alert.createdAt)}
+                  </Text>
+                </View>
+
+                {alert.details ? (
+                  <Text
+                    style={[styles.recentAlertSnippet, { color: colors.textSecondary }]}
+                    numberOfLines={2}
+                  >
+                    {alert.details}
+                  </Text>
+                ) : null}
+
+                <View style={styles.recentAlertBadgeRow}>
+                  <StatusBadge type="delivery" value={alert.deliveryStatus || 'pending'} size="sm" />
+                  <StatusBadge type="sync" value={alert.syncStatus || 'pending_sync'} size="sm" />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.emptyRecentCard,
+              {
+                backgroundColor: colors.cardBackground,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <Text style={styles.emptyRecentIcon}>🛡️</Text>
+            <Text style={[styles.emptyRecentTitle, { color: colors.textPrimary }]}>
+              No Active Distress Signals
+            </Text>
+            <Text style={[styles.emptyRecentDesc, { color: colors.textMuted }]}>
+              Your device has no unacknowledged emergency alerts recorded in local SQLite storage.
+            </Text>
+          </View>
+        )}
+
+        {/* Quick Action Navigation Tiles */}
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>MISSION MODULES</Text>
         </View>
 
         <View style={styles.actionGrid}>
           <TouchableOpacity
-            style={[styles.actionCard, shadows.card]}
+            style={[styles.actionCard, { backgroundColor: colors.cardBackground, borderColor: colors.border }, shadows.card]}
             activeOpacity={0.75}
             onPress={() => navigation.navigate('LiveMap')}
             accessibilityRole="button"
-            accessibilityLabel="View Live Emergency Map"
+            accessibilityLabel="Live Incident Map"
           >
-            <View style={[styles.actionIconCircle, { backgroundColor: '#E0F2FE' }]}>
+            <View style={[styles.actionIconCircle, { backgroundColor: isDark ? '#172554' : '#E0F2FE' }]}>
               <Text style={styles.actionIcon}>🗺️</Text>
             </View>
-            <Text style={styles.actionCardTitle}>Live Incident Map</Text>
-            <Text style={styles.actionCardSubtitle}>
-              Situational map & triage tracking
+            <Text style={[styles.actionCardTitle, { color: colors.textPrimary }]}>Live Incident Map</Text>
+            <Text style={[styles.actionCardSubtitle, { color: colors.textSecondary }]}>
+              Interactive GPS markers & triage
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionCard, shadows.card]}
+            style={[styles.actionCard, { backgroundColor: colors.cardBackground, borderColor: colors.border }, shadows.card]}
             activeOpacity={0.75}
             onPress={() => navigation.navigate('NearbyDevices')}
             accessibilityRole="button"
-            accessibilityLabel="View Nearby Devices"
+            accessibilityLabel="Nearby Devices"
           >
-            <View style={[styles.actionIconCircle, { backgroundColor: colors.infoLight }]}>
-              <Text style={styles.actionIcon}>👥</Text>
+            <View style={[styles.actionIconCircle, { backgroundColor: isDark ? '#172554' : '#EFF6FF' }]}>
+              <Text style={styles.actionIcon}>📡</Text>
             </View>
-            <Text style={styles.actionCardTitle}>Nearby Devices</Text>
-            <Text style={styles.actionCardSubtitle}>
-              Scan for nearby BLE mesh nodes
+            <Text style={[styles.actionCardTitle, { color: colors.textPrimary }]}>Nearby Mesh Peers</Text>
+            <Text style={[styles.actionCardSubtitle, { color: colors.textSecondary }]}>
+              Scan BLE nodes & signal strength
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionCard, shadows.card]}
+            style={[styles.actionCard, { backgroundColor: colors.cardBackground, borderColor: colors.border }, shadows.card]}
             activeOpacity={0.75}
             onPress={() => navigation.navigate('EmergencyHistory')}
             accessibilityRole="button"
-            accessibilityLabel="View Emergency History"
+            accessibilityLabel="Emergency History"
           >
-            <View style={[styles.actionIconCircle, { backgroundColor: colors.primaryLight }]}>
+            <View style={[styles.actionIconCircle, { backgroundColor: isDark ? '#450A0A' : '#FEE2E2' }]}>
               <Text style={styles.actionIcon}>📋</Text>
             </View>
-            <Text style={styles.actionCardTitle}>Emergency History</Text>
-            <Text style={styles.actionCardSubtitle}>
-              Review local drafts and alerts
+            <Text style={[styles.actionCardTitle, { color: colors.textPrimary }]}>Alert History</Text>
+            <Text style={[styles.actionCardSubtitle, { color: colors.textSecondary }]}>
+              SQLite ledger & relay hops
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionCard, shadows.card]}
+            style={[styles.actionCard, { backgroundColor: colors.cardBackground, borderColor: colors.border }, shadows.card]}
             activeOpacity={0.75}
             onPress={() => navigation.navigate('Contacts')}
             accessibilityRole="button"
             accessibilityLabel="Emergency Contacts"
           >
-            <View style={[styles.actionIconCircle, { backgroundColor: '#DCFCE7' }]}>
+            <View style={[styles.actionIconCircle, { backgroundColor: isDark ? '#052E16' : '#DCFCE7' }]}>
               <Text style={styles.actionIcon}>👥</Text>
             </View>
-            <Text style={styles.actionCardTitle}>Contacts</Text>
-            <Text style={styles.actionCardSubtitle}>
-              Configure SOS notification targets
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionCard, shadows.card]}
-            activeOpacity={0.75}
-            onPress={() => navigation.navigate('NotificationHistory')}
-            accessibilityRole="button"
-            accessibilityLabel="Notification Logs"
-          >
-            <View style={[styles.actionIconCircle, { backgroundColor: '#FEF3C7' }]}>
-              <Text style={styles.actionIcon}>🔔</Text>
-            </View>
-            <Text style={styles.actionCardTitle}>Notification Logs</Text>
-            <Text style={styles.actionCardSubtitle}>
-              Delivery status for SMS/Email
+            <Text style={[styles.actionCardTitle, { color: colors.textPrimary }]}>Emergency Contacts</Text>
+            <Text style={[styles.actionCardSubtitle, { color: colors.textSecondary }]}>
+              Priority dispatch targets
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Footer info */}
+        {/* Footer */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            RescueLink Prototype v1.0.0 · Step 2 Authentication & Offline SOS
+          <Text style={[styles.footerText, { color: colors.textMuted }]}>
+            RescueLink v1.0.0 · Step 13 UI/UX Design System
           </Text>
         </View>
       </ScrollView>
@@ -397,195 +514,218 @@ export const HomeScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.xxl,
   },
   topBarRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
   responderPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.successLight,
-    paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.successBorder,
-    maxWidth: '80%',
+    maxWidth: '75%',
   },
   responderDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.success,
-    marginRight: 6,
+    marginRight: spacing.sm,
   },
   responderText: {
-    fontSize: 12,
+    ...typography.caption,
     fontWeight: '700',
-    color: colors.successDark,
   },
   guestPill: {
-    backgroundColor: colors.surfaceSubtle,
-    paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-    borderRadius: borderRadius.round,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.border,
   },
   guestText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    ...typography.caption,
+    fontWeight: '700',
   },
   profileIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
   },
   profileIconText: {
-    fontSize: 16,
+    fontSize: 18,
   },
   header: {
-    alignItems: 'center',
-    marginVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.xs,
   },
   brandRow: {
     marginBottom: spacing.xs,
   },
   brandBadge: {
-    backgroundColor: colors.infoLight,
-    color: colors.infoDark,
-    fontSize: 10,
-    fontWeight: '800',
-    paddingHorizontal: spacing.sm + 2,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: borderRadius.round,
-    letterSpacing: 0.8,
+    borderRadius: borderRadius.sm,
     borderWidth: 1,
-    borderColor: colors.infoBorder,
+  },
+  brandBadgeText: {
+    color: '#93C5FD',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   appTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    letterSpacing: 0.5,
+    ...typography.display,
+    letterSpacing: -0.5,
   },
   appSubtitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.textSecondary,
+    ...typography.body,
     marginTop: 2,
-  },
-  disclaimerBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.warningLight,
-    borderWidth: 1,
-    borderColor: colors.warningBorder,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginVertical: spacing.sm,
-  },
-  disclaimerIcon: {
-    fontSize: 20,
-    marginRight: spacing.sm,
-  },
-  disclaimerTextContainer: {
-    flex: 1,
-  },
-  disclaimerTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.warningDark,
-    marginBottom: 2,
-  },
-  disclaimerText: {
-    fontSize: 12,
-    color: colors.warningDark,
-    lineHeight: 16,
   },
   sosSection: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: spacing.md,
+    paddingVertical: spacing.sm,
   },
   sosHelperText: {
-    fontSize: 12,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
     textAlign: 'center',
-    maxWidth: 280,
-    lineHeight: 17,
+    maxWidth: 290,
+    marginTop: -8,
+    marginBottom: spacing.md,
+    lineHeight: 18,
   },
   sectionHeader: {
-    marginTop: spacing.lg,
-    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xs,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
+    fontWeight: '800',
     letterSpacing: 0.8,
   },
   sectionCaption: {
-    fontSize: 11,
-    color: colors.textMuted,
+    ...typography.caption,
+    marginTop: 2,
+  },
+  viewAllText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  statusGrid: {
+    paddingHorizontal: spacing.lg,
+  },
+  activityContainer: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+  },
+  recentAlertCard: {
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  recentAlertTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  recentAlertTime: {
+    ...typography.caption,
+  },
+  recentAlertSnippet: {
+    ...typography.bodySmall,
+    marginVertical: spacing.xs,
+  },
+  recentAlertBadgeRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  emptyRecentCard: {
+    marginHorizontal: spacing.lg,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    padding: spacing.lg,
+    alignItems: 'center',
+  },
+  emptyRecentIcon: {
+    fontSize: 28,
+    marginBottom: spacing.xs,
+  },
+  emptyRecentTitle: {
+    ...typography.cardTitle,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  emptyRecentDesc: {
+    ...typography.bodySmall,
+    textAlign: 'center',
+    lineHeight: 18,
   },
   actionGrid: {
     flexDirection: 'row',
-    gap: spacing.md,
-    marginVertical: spacing.xs,
+    flexWrap: 'wrap',
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+    marginTop: spacing.xs,
   },
   actionCard: {
-    flex: 1,
-    backgroundColor: colors.cardBackground,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
+    width: '48%',
+    borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    padding: spacing.md,
+    minHeight: 120,
+    justifyContent: 'center',
   },
   actionIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: spacing.sm,
   },
   actionIcon: {
-    fontSize: 20,
+    fontSize: 18,
   },
   actionCardTitle: {
+    ...typography.cardTitle,
     fontSize: 14,
     fontWeight: '700',
-    color: colors.textPrimary,
     marginBottom: 2,
   },
   actionCardSubtitle: {
+    ...typography.bodySmall,
     fontSize: 11,
-    color: colors.textSecondary,
     lineHeight: 15,
   },
   footer: {
+    marginTop: spacing.xl,
     alignItems: 'center',
-    marginTop: spacing.xxl,
+    paddingVertical: spacing.md,
   },
   footerText: {
-    fontSize: 11,
-    color: colors.textMuted,
+    ...typography.caption,
   },
 });
 

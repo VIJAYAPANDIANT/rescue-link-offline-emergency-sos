@@ -423,7 +423,7 @@ graph TD
 
 ---
 
-## 10. Comprehensive Automated Test Matrix (59 Tests)
+## 10. Comprehensive Automated Test Matrix (62 Tests)
 
 The test runner (`tests/run-all-tests.mjs`) exercises all core subsystems in pure Node.js with in-memory SQLite and ephemeral Express servers:
 
@@ -436,16 +436,11 @@ The test runner (`tests/run-all-tests.mjs`) exercises all core subsystems in pur
 7. **Module 7**: Emergency Contact Management & SOS Notifications (9 tests)
 8. **Module 8**: Live Emergency Map & Incident Tracking (6 tests)
 9. **Module 9**: Admin Dashboard, Incident Monitoring & Analytics (7 tests)
-   - `Admin Auth & Role Restrictions`: Non-admin users rejected with `403 Forbidden` (`FORBIDDEN_ADMIN_REQUIRED`); unauthenticated requests rejected with 401
-   - `Admin Login & Dashboard Overview`: Authenticated administrator receives real aggregated telemetry (`summary`, `notificationStats`, `incidentTypeDistribution`, `timeline`)
-   - `Incident Management`: Admin updates lifecycle status (`Investigating`, `Dispatched`, `Resolved`), preserves original survivor details and coordinates, rejects invalid status strings
-   - `Administrative Audit Logs`: Status updates automatically generate tamper-evident audit records in `audit_logs.json` without leaking passwords, tokens, or secrets
-   - `Admin User Management & Status`: Admin suspends user account, immediately blocking login (`403 ACCOUNT_SUSPENDED`); self-suspension is guarded and rejected
-   - `Relay Telemetry Monitoring`: Accurately reports hop metrics, unique forwarder nodes, and hop count distributions
-   - `Notification Monitoring`: Reports delivery states (queued, sending, sent, delivered, failed) and strictly masks recipient details (e.g. `a***n@example.com`, `+1***890`)
 10. **Module 10 (Step 12)**: Production Hardening & Readiness Verification (2 tests)
-   - `Security & Headers`: Backend enforces HTTP security headers (`nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`) and sliding window rate limit headers (`X-RateLimit-*`)
-   - `Readiness Probe`: `GET /api/ready` validates directory and file access across all 5 JSON stores and returns heap memory stats
+11. **Module 11 (Step 13)**: UI/UX Design System, Theming & Accessibility Contract (3 tests)
+   - `UI Design System`: Complete token coverage across light and dark palettes conforming to WCAG AA contrast
+   - `Emergency Interaction Design`: Independent lifecycle state separation across delivery, acknowledgment, and sync states
+   - `Test Mode Isolation`: Non-emergency simulation drills carry explicit drill metadata and do not summon real responders
 
 ---
 
@@ -477,3 +472,27 @@ During server initialization (`server/config/env.js`), the runtime validates:
 
 ### 11.4 Graceful Shutdown Engine
 Handles `SIGTERM` and `SIGINT` signals with a 10-second drain window, closing active keep-alive HTTP connections and pending storage write locks before terminating the process cleanly without data corruption.
+
+---
+
+## 12. Design System & Accessibility Architecture (Step 13)
+
+### 12.1 Emergency Visual Identity & Color Philosophy
+RescueLink's design system adheres strictly to emergency response ergonomics:
+- **Dark Navy (`#0F172A` / `#0B1120`)**: Provides primary structural authority, high contrast, and reduces eye strain in nocturnal or blackout environments.
+- **Crimson Red (`#DC2626` / `#EF4444`)**: Reserved exclusively for active emergency SOS alerts and destructive confirmation actions.
+- **Emerald Green (`#16A34A` / `#22C55E`)**: Communicates positive confirmation (verified BLE peer acknowledgment, delivered SMS/Email notifications).
+- **Tangerine Orange (`#EA580C` / `#F97316`)**: Communicates non-critical warnings (pending outbox queues, disabled relays, Bluetooth warnings).
+- **Cobalt Blue (`#2563EB` / `#3B82F6`)**: Indicates GPS location, simulation drills (`Test / Drill`), and general telemetry.
+
+### 12.2 Multi-State Progression Architecture
+Emergency distress progression is cleanly decomposed into 4 independent lifecycle stages:
+1. **Stage 1: Saved Locally in SQLite**: Immediate transaction commit to local WAL database with zero network dependencies.
+2. **Stage 2: BLE Transmission**: Active advertisement of compact 512-byte GATT frames over Bluetooth Low Energy.
+3. **Stage 3: Peer Confirmed (ACK)**: Genuine peer confirmation written back by a discovering central node over BLE.
+4. **Stage 4: Cloud Synchronized**: Opportunistic batch upload to central rescue servers once internet connectivity is confirmed.
+
+### 12.3 Accessibility & Universal Design Guardrails
+- **Color Independence**: Every emergency status badge incorporates an explicit icon glyph (`🚨`, `📡`, `🤝`, `☁️`, `✓`, `✕`, `⏳`) alongside high-contrast text labels. Color is **never** used alone to convey critical life-safety states.
+- **Large Touch Targets**: All interactive triggers, buttons, and navigation tabs enforce a minimum touch bounding box of 48x48 dp.
+- **Simulation Drill Isolation**: Non-emergency drills are given distinctive blue/cyan styling and explicit `DRILL` pills to prevent false-alarm confusion during field training.

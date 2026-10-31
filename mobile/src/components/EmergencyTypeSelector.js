@@ -1,24 +1,33 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { EMERGENCY_TYPES } from '../utils/constants';
-import { colors, borderRadius, spacing } from '../utils/theme';
+import { useTheme } from '../context/ThemeContext';
+import { borderRadius, spacing, typography } from '../utils/theme';
 
 /**
  * EmergencyTypeSelector Component
  *
  * Allows users in crisis to rapidly identify and select their emergency category.
- * Each item has an icon, high-contrast label, and distinctive active state.
- *
- * @param {string} selectedType - Currently selected emergency type ID
- * @param {Function} onSelectType - Callback invoked when a type is pressed
+ * Each item has an icon, high-contrast label, distinctive active state,
+ * and a prominent notice when selecting Test / Drill mode.
  */
 export const EmergencyTypeSelector = ({ selectedType, onSelectType }) => {
+  const { colors, isDark } = useTheme();
+
   return (
     <View style={styles.container}>
-      <Text style={styles.sectionLabel}>SELECT EMERGENCY TYPE *</Text>
+      <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+        SELECT EMERGENCY CATEGORY *
+      </Text>
       <View style={styles.grid}>
         {EMERGENCY_TYPES.map((type) => {
           const isSelected = selectedType === type.id;
+          const isDrill = type.id === 'test' || type.label.toLowerCase().includes('drill');
+
+          const activeBorder = isDrill ? colors.info : (type.color || colors.primary);
+          const activeBg = isDrill
+            ? (isDark ? '#172554' : '#EFF6FF')
+            : (isDark ? '#1E293B' : colors.cardBackground);
 
           return (
             <TouchableOpacity
@@ -27,32 +36,51 @@ export const EmergencyTypeSelector = ({ selectedType, onSelectType }) => {
               onPress={() => onSelectType(type.id)}
               accessibilityRole="radio"
               accessibilityState={{ selected: isSelected }}
-              accessibilityLabel={`${type.label}. ${type.description}`}
+              accessibilityLabel={`${type.label}. ${type.description}${isDrill ? '. Non-emergency simulation drill.' : ''}`}
               style={[
                 styles.itemCard,
+                {
+                  backgroundColor: isSelected ? activeBg : colors.cardBackground,
+                  borderColor: isSelected ? activeBorder : colors.border,
+                },
                 isSelected && styles.itemCardSelected,
-                isSelected && { borderColor: type.color },
               ]}
             >
               <View
                 style={[
                   styles.iconContainer,
-                  { backgroundColor: isSelected ? type.bgColor : colors.surfaceSubtle },
+                  {
+                    backgroundColor: isSelected
+                      ? (isDrill ? '#3B82F6' : (type.color || colors.primary))
+                      : colors.surfaceSubtle,
+                  },
                 ]}
               >
                 <Text style={styles.itemIcon}>{type.symbol}</Text>
               </View>
 
               <View style={styles.textContainer}>
+                <View style={styles.labelRow}>
+                  <Text
+                    style={[
+                      styles.itemLabel,
+                      { color: isSelected ? activeBorder : colors.textPrimary },
+                      isSelected && { fontWeight: '800' },
+                    ]}
+                  >
+                    {type.label}
+                  </Text>
+                  {isDrill ? (
+                    <View style={[styles.drillBadge, { backgroundColor: colors.infoLight, borderColor: colors.infoBorder }]}>
+                      <Text style={[styles.drillBadgeText, { color: colors.infoDark }]}>DRILL</Text>
+                    </View>
+                  ) : null}
+                </View>
+
                 <Text
-                  style={[
-                    styles.itemLabel,
-                    isSelected && { color: type.color, fontWeight: '700' },
-                  ]}
+                  numberOfLines={2}
+                  style={[styles.itemDescription, { color: colors.textSecondary }]}
                 >
-                  {type.label}
-                </Text>
-                <Text numberOfLines={2} style={styles.itemDescription}>
                   {type.description}
                 </Text>
               </View>
@@ -61,11 +89,11 @@ export const EmergencyTypeSelector = ({ selectedType, onSelectType }) => {
               <View
                 style={[
                   styles.radioOuter,
-                  isSelected && { borderColor: type.color },
+                  { borderColor: isSelected ? activeBorder : colors.borderDark },
                 ]}
               >
                 {isSelected && (
-                  <View style={[styles.radioInner, { backgroundColor: type.color }]} />
+                  <View style={[styles.radioInner, { backgroundColor: activeBorder }]} />
                 )}
               </View>
             </TouchableOpacity>
@@ -82,8 +110,7 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
+    fontWeight: '800',
     letterSpacing: 0.8,
     marginBottom: spacing.sm,
   },
@@ -94,22 +121,20 @@ const styles = StyleSheet.create({
   itemCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.cardBackground,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1.5,
-    borderColor: colors.border,
+    minHeight: 64,
   },
   itemCardSelected: {
-    backgroundColor: '#FFFDFD',
     borderWidth: 2,
   },
   iconContainer: {
     width: 44,
     height: 44,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
+    borderRadius: borderRadius.sm,
     justifyContent: 'center',
+    alignItems: 'center',
     marginRight: spacing.md,
   },
   itemIcon: {
@@ -119,15 +144,29 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: spacing.sm,
   },
-  itemLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
     marginBottom: 2,
   },
+  itemLabel: {
+    ...typography.cardTitle,
+    fontWeight: '700',
+  },
+  drillBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+  },
+  drillBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   itemDescription: {
-    fontSize: 12,
-    color: colors.textSecondary,
+    ...typography.bodySmall,
     lineHeight: 16,
   },
   radioOuter: {
@@ -135,14 +174,13 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     borderWidth: 2,
-    borderColor: colors.borderDark,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
   radioInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
 });
 

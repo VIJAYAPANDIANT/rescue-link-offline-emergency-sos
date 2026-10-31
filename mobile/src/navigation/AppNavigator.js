@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, SafeAreaView } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { ThemeProvider, useTheme } from '../context/ThemeContext';
 import { HomeScreen } from '../screens/HomeScreen';
 import { SendSOSScreen } from '../screens/SendSOSScreen';
 import { NearbyDevicesScreen } from '../screens/NearbyDevicesScreen';
@@ -11,13 +12,14 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { EmergencyContactsScreen } from '../screens/EmergencyContactsScreen';
 import { NotificationHistoryScreen } from '../screens/NotificationHistoryScreen';
 import { LiveEmergencyMapScreen } from '../screens/LiveEmergencyMapScreen';
-import { colors, spacing, shadows } from '../utils/theme';
+import { spacing, shadows } from '../utils/theme';
 
 /**
  * Navigation Content Controller
  */
 const NavigatorContent = () => {
   const { isAuthenticated } = useAuth();
+  const { colors, isDark } = useTheme();
   const [currentScreen, setCurrentScreen] = useState('Home');
   const [history, setHistory] = useState(['Home']);
   const [routeParams, setRouteParams] = useState({});
@@ -61,6 +63,7 @@ const NavigatorContent = () => {
       case 'Register':
         return <RegisterScreen navigation={navigation} route={{ params: routeParams }} />;
       case 'Profile':
+      case 'Settings':
         return <ProfileScreen navigation={navigation} route={{ params: routeParams }} />;
       case 'SendSOS':
         return (
@@ -109,27 +112,38 @@ const NavigatorContent = () => {
     }
   };
 
-  // Bottom Navigation Items
+  // Bottom Navigation Items with Accessible Icons & Labels
   const navTabs = [
-    { key: 'Home', label: 'Dashboard', icon: '🚨' },
+    { key: 'Home', label: 'Home', icon: '🚨' },
     { key: 'LiveMap', label: 'Map', icon: '🗺️' },
-    { key: 'SendSOS', label: 'Send SOS', icon: '📝' },
+    { key: 'SendSOS', label: 'Send SOS', icon: '⚡' },
     { key: 'NearbyDevices', label: 'Nearby', icon: '📡' },
     { key: 'EmergencyHistory', label: 'History', icon: '📋' },
     {
       key: 'Profile',
-      label: isAuthenticated ? 'Profile' : 'Sign In',
-      icon: isAuthenticated ? '🛡️' : '👤',
+      label: isAuthenticated ? 'Settings' : 'Sign In',
+      icon: isAuthenticated ? '⚙️' : '👤',
     },
   ];
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+
       {/* Active Screen View */}
       <View style={styles.screenContainer}>{renderScreen()}</View>
 
       {/* Accessible Bottom Emergency Navigation Bar */}
-      <View style={[styles.bottomBar, shadows.cardElevated]}>
+      <View
+        style={[
+          styles.bottomBar,
+          {
+            backgroundColor: colors.cardBackground,
+            borderTopColor: colors.border,
+          },
+          shadows.cardElevated,
+        ]}
+      >
         {navTabs.map((tab) => {
           const isActive =
             currentScreen === tab.key ||
@@ -139,7 +153,10 @@ const NavigatorContent = () => {
           return (
             <TouchableOpacity
               key={tab.key}
-              style={[styles.tabButton, isSOS && styles.sosTabHighlight]}
+              style={[
+                styles.tabButton,
+                isSOS && [styles.sosTabHighlight, { backgroundColor: isDark ? '#450A0A' : '#FEE2E2', borderColor: colors.primaryBorder }],
+              ]}
               activeOpacity={0.7}
               onPress={() => navigation.navigate(tab.key)}
               accessibilityRole="tab"
@@ -150,18 +167,14 @@ const NavigatorContent = () => {
                 <Text style={[styles.tabIcon, isSOS && styles.sosTabIcon]}>
                   {tab.icon}
                 </Text>
-                {tab.badge > 0 ? (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>{tab.badge}</Text>
-                  </View>
-                ) : null}
               </View>
 
               <Text
                 style={[
                   styles.tabLabel,
-                  isActive && styles.tabLabelActive,
-                  isSOS && styles.sosTabLabel,
+                  { color: colors.textSecondary },
+                  isActive && [styles.tabLabelActive, { color: isSOS ? colors.primary : (isDark ? '#60A5FA' : colors.navy) }],
+                  isSOS && [styles.sosTabLabel, { color: colors.primary }],
                 ]}
                 numberOfLines={1}
               >
@@ -176,42 +189,42 @@ const NavigatorContent = () => {
 };
 
 /**
- * AppNavigator Root (Wrapped with AuthProvider)
+ * AppNavigator Root (Wrapped with ThemeProvider & AuthProvider)
  */
 export const AppNavigator = () => {
   return (
-    <AuthProvider>
-      <NavigatorContent />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <NavigatorContent />
+      </AuthProvider>
+    </ThemeProvider>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   screenContainer: {
     flex: 1,
   },
   bottomBar: {
     flexDirection: 'row',
-    height: 64,
-    backgroundColor: colors.cardBackground,
+    height: 68,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
     paddingHorizontal: spacing.xs,
     alignItems: 'center',
     justifyContent: 'space-around',
   },
   tabButton: {
     flex: 1,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: spacing.xs,
+    borderRadius: 8,
   },
   tabIconWrapper: {
-    position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -222,38 +235,21 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 10,
     fontWeight: '600',
-    color: colors.textSecondary,
   },
   tabLabelActive: {
-    color: colors.primary,
     fontWeight: '800',
   },
   sosTabHighlight: {
     transform: [{ scale: 1.05 }],
+    borderWidth: 1,
+    paddingHorizontal: 4,
+    marginHorizontal: 2,
   },
   sosTabIcon: {
     fontSize: 22,
   },
   sosTabLabel: {
-    color: colors.primary,
-    fontWeight: '800',
-  },
-  tabBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -10,
-    backgroundColor: colors.primary,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-  },
-  tabBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '800',
+    fontWeight: '900',
   },
 });
 

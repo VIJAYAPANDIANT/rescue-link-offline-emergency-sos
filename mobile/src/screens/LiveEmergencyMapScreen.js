@@ -13,17 +13,34 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { AlertRepository } from '../database/alertRepository';
 import { apiClient } from '../services/api/apiClient';
 import { locationService } from '../services/location/locationService';
 import { EmergencyMapView } from '../components/EmergencyMapView';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { colors, spacing, borderRadius, shadows } from '../utils/theme';
+import { StatusBadge } from '../components/StatusBadge';
+import { EmptyState } from '../components/EmptyState';
+import { spacing, borderRadius, typography, shadows } from '../utils/theme';
 import { formatTimestamp } from '../utils/helpers';
 
+/**
+ * LiveEmergencyMapScreen
+ *
+ * Professional situational awareness map & triage tracker:
+ * - Segmented toggle between Map View and Structured List View
+ * - Dual-engine map (react-native-maps + Tactical Radar fallback)
+ * - Incident details bottom sheet with turn-by-turn navigation deep links
+ * - Quarantined unmapped incidents drawer (prevents false 0,0 pins)
+ * - Live SSE vs Periodic Polling vs SQLite Cache indicators
+ */
 export const LiveEmergencyMapScreen = ({ navigation, route }) => {
   const { user, isAuthenticated } = useAuth();
+  const { colors, isDark } = useTheme();
   const focusAlertId = route?.params?.focusAlertId;
+
+  // View Mode: 'map' | 'list'
+  const [viewMode, setViewMode] = useState('map');
 
   // Incidents State
   const [incidents, setIncidents] = useState([]);
@@ -31,45 +48,37 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Filters
-  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  // Status Filter
   const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'Pending' | 'Resolved'
 
-  // Live Stream & Reachability State ('live' | 'polling' | 'offline')
+  // Live Stream Status ('live' | 'polling' | 'offline')
   const [liveStreamStatus, setLiveStreamStatus] = useState('polling');
 
-  // User Current Location State
+  // User Location
   const [userLocation, setUserLocation] = useState(null);
   const [isLocatingUser, setIsLocatingUser] = useState(false);
 
-  // Unmapped Incidents Modal State
+  // Unmapped Modal
   const [unmappedModalVisible, setUnmappedModalVisible] = useState(false);
 
-  // Subscription reference
   const unsubscribeRef = useRef(null);
 
-  /**
-   * Load incidents from local SQLite first, then refresh from Cloud if available
-   */
   const loadIncidents = useCallback(async () => {
     try {
-      // 1. Immediately load mapped incidents from local SQLite (Offline-first guarantee)
       const localMapped = await AlertRepository.getMappedAlerts({
         deliveryStatus: statusFilter !== 'ALL' ? statusFilter : null,
       });
       const localUnmapped = await AlertRepository.getUnmappedAlerts();
 
-      setIncidents(localMapped);
-      setUnmappedIncidents(localUnmapped);
+      setIncidents(localMapped || []);
+      setUnmappedIncidents(localUnmapped || []);
 
-      // 2. If authenticated & online, fetch confirmed mapped incidents from backend
       if (isAuthenticated) {
         const cloudRes = await apiClient.getMappedAlerts({
           status: statusFilter !== 'ALL' ? statusFilter : undefined,
         });
 
         if (cloudRes.success && Array.isArray(cloudRes.data)) {
-          // Merge into local SQLite to ensure offline persistence
           for (const serverAlert of cloudRes.data) {
             await AlertRepository.saveOrUpdateAlert({
               ...serverAlert,
@@ -81,13 +90,12 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
             });
           }
 
-          // Reload merged dataset from SQLite
           const refreshedMapped = await AlertRepository.getMappedAlerts({
             deliveryStatus: statusFilter !== 'ALL' ? statusFilter : null,
           });
           const refreshedUnmapped = await AlertRepository.getUnmappedAlerts();
-          setIncidents(refreshedMapped);
-          setUnmappedIncidents(refreshedUnmapped);
+          setIncidents(refreshedMapped || []);
+          setUnmappedIncidents(refreshedUnmapped || []);
         }
       }
     } catch (err) {
@@ -97,16 +105,13 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
     }
   }, [isAuthenticated, statusFilter]);
 
-  // Initial mount & incident stream listener setup
   useEffect(() => {
     setIsLoading(true);
     loadIncidents();
 
-    // Subscribe to live incident stream / adaptive polling
     if (isAuthenticated) {
       unsubscribeRef.current = apiClient.subscribeToIncidents({
         onIncidentUpdate: async (updatedAlert) => {
-          // Persist to local SQLite
           await AlertRepository.saveOrUpdateAlert({
             ...updatedAlert,
             alertId: updatedAlert.id,
@@ -115,11 +120,10 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
             syncStatus: 'synced',
           });
 
-          // Refresh map state
           const updatedMapped = await AlertRepository.getMappedAlerts();
           const updatedUnmapped = await AlertRepository.getUnmappedAlerts();
-          setIncidents(updatedMapped);
-          setUnmappedIncidents(updatedUnmapped);
+          setIncidents(updatedMapped || []);
+          setUnmappedIncidents(updatedUnmapped || []);
         },
         onStatusChange: (status) => {
           setLiveStreamStatus(status);
@@ -137,21 +141,15 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
     };
   }, [isAuthenticated, loadIncidents]);
 
-  // Focus specific incident when navigated with focusAlertId param
+  // Focus specific incident when navigated with param
   useEffect(() => {
     if (focusAlertId && incidents.length > 0) {
-      const match = incidents.find(
-        (i) => (i.alertId || i.id) === focusAlertId
-      );
-      if (match) {
-        setSelectedIncident(match);
-      }
+      const match = incidents.find((i) => (i.alertId || i.id) === focusAlertId);
+      if (match) setSelectedIncident(match);
     }
   }, [focusAlertId, incidents]);
 
-  /**
-   * Acquire user location ONLY after explicit button press
-   */
+  // Acquire User GPS
   const handleAcquireUserLocation = async () => {
     setIsLocatingUser(true);
     try {
@@ -160,14 +158,12 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
         setUserLocation(result.coords);
         Alert.alert(
           '📍 GPS Location Acquired',
-          `Your position (${result.coords.latitude.toFixed(4)}°, ${result.coords.longitude.toFixed(4)}°) is now shown on the tactical map.`,
-          [{ text: 'OK' }]
+          `Your position (${result.coords.latitude.toFixed(4)}°, ${result.coords.longitude.toFixed(4)}°) is now pinned on the emergency map.`
         );
       } else {
         Alert.alert(
           'GPS Unavailable',
-          result.error || 'Location permission denied. Map remains centered on emergency incidents.',
-          [{ text: 'OK' }]
+          result.error || 'Location permission denied. Map remains centered on emergency incidents.'
         );
       }
     } catch (e) {
@@ -177,9 +173,7 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
     }
   };
 
-  /**
-   * Open external Maps directions
-   */
+  // External Maps Deep Link
   const handleNavigateWithExternalMaps = async (incident) => {
     if (!incident || typeof incident.latitude !== 'number' || typeof incident.longitude !== 'number') {
       Alert.alert('Missing Coordinates', 'Cannot navigate: this incident does not have GPS coordinates.');
@@ -189,7 +183,6 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
     const { latitude, longitude } = incident;
     const label = encodeURIComponent(`SOS: ${incident.emergencyType}`);
 
-    // Standard cross-platform Google Maps / Apple Maps deep link
     const url = Platform.select({
       ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
       android: `geo:0,0?q=${latitude},${longitude}(${label})`,
@@ -201,293 +194,344 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
       if (supported) {
         await Linking.openURL(url);
       } else {
-        // Fallback to browser Google Maps URL
-        await Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`);
+        await Linking.openURL(`https://maps.google.com/?q=${latitude},${longitude}`);
       }
-    } catch (err) {
-      Alert.alert('Navigation Error', 'Unable to launch map application: ' + err.message);
+    } catch {
+      await Linking.openURL(`https://maps.google.com/?q=${latitude},${longitude}`);
     }
   };
 
-  // Filtered incidents for display
-  const displayedIncidents = incidents.filter((incident) => {
-    if (selectedCategory !== 'ALL' && incident.emergencyType !== selectedCategory) {
-      return false;
-    }
-    return true;
-  });
-
-  const getStatusBadgeMeta = () => {
+  const getTelemetryPill = () => {
     switch (liveStreamStatus) {
       case 'live':
         return {
           icon: '🟢',
-          label: 'Live (Real-Time SSE)',
-          bg: '#DCFCE7',
-          color: '#15803D',
+          text: 'SSE Stream Active',
+          bg: isDark ? '#052E16' : '#DCFCE7',
+          color: isDark ? '#4ADE80' : '#15803D',
         };
       case 'polling':
         return {
           icon: '🟡',
-          label: 'Periodic Polling (15s)',
-          bg: '#FEF3C7',
-          color: '#B45309',
+          text: 'Periodic Polling (15s)',
+          bg: isDark ? '#451A03' : '#FEF3C7',
+          color: isDark ? '#FBBF24' : '#B45309',
         };
       case 'offline':
       default:
         return {
           icon: '⚪',
-          label: 'Offline (SQLite Cache)',
-          bg: '#F1F5F9',
-          color: '#475569',
+          text: 'SQLite Offline Cache',
+          bg: isDark ? '#1E293B' : '#F1F5F9',
+          color: isDark ? '#CBD5E1' : '#475569',
         };
     }
   };
 
-  const statusMeta = getStatusBadgeMeta();
+  const telePill = getTelemetryPill();
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Top Header */}
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerTitleRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.screenTitle}>Live Incident Map</Text>
-            <Text style={styles.screenSubtitle}>
-              Situational awareness & spatial emergency triage
+        <View style={styles.headerTopRow}>
+          <View>
+            <Text style={[styles.screenTitle, { color: colors.textPrimary }]}>
+              Live Incident Map
+            </Text>
+            <Text style={[styles.screenSubtitle, { color: colors.textSecondary }]}>
+              {incidents.length} geocoded incidents · {unmappedIncidents.length} unmapped
             </Text>
           </View>
 
-          {/* Real-time Status Badge */}
-          <View style={[styles.streamStatusBadge, { backgroundColor: statusMeta.bg }]}>
-            <Text style={[styles.streamStatusText, { color: statusMeta.color }]}>
-              {statusMeta.icon} {statusMeta.label}
+          {/* Telemetry Indicator */}
+          <View style={[styles.telemetryBadge, { backgroundColor: telePill.bg }]}>
+            <Text style={[styles.telemetryText, { color: telePill.color }]}>
+              {telePill.icon} {telePill.text}
             </Text>
           </View>
         </View>
 
-        {/* Category Filter Chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryChipsScroll}
-        >
-          {[
-            { id: 'ALL', label: 'All Incidents' },
-            { id: 'Medical Emergency', label: '🚑 Medical' },
-            { id: 'Fire', label: '🔥 Fire' },
-            { id: 'Accident', label: '⚠️ Accident' },
-            { id: 'Personal Safety', label: '🛡️ Safety' },
-            { id: 'Test / Drill', label: '🧪 Drill' },
-          ].map((cat) => (
+        {/* View Mode Toggle & Location Center Button */}
+        <View style={styles.controlRow}>
+          <View style={[styles.segmentedSwitch, { backgroundColor: colors.surfaceSubtle, borderColor: colors.borderDark }]}>
             <TouchableOpacity
-              key={cat.id}
               style={[
-                styles.categoryChip,
-                selectedCategory === cat.id && styles.categoryChipActive,
+                styles.segmentBtn,
+                viewMode === 'map' && [styles.segmentBtnActive, { backgroundColor: colors.navyDark }],
               ]}
-              onPress={() => setSelectedCategory(cat.id)}
+              onPress={() => setViewMode('map')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: viewMode === 'map' }}
+              accessibilityLabel="Map View"
             >
               <Text
                 style={[
-                  styles.categoryChipText,
-                  selectedCategory === cat.id && styles.categoryChipTextActive,
+                  styles.segmentBtnText,
+                  { color: viewMode === 'map' ? '#FFFFFF' : colors.textSecondary },
+                  viewMode === 'map' && { fontWeight: '800' },
                 ]}
               >
-                {cat.label}
+                🗺️ Map View
               </Text>
             </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
 
-      {/* Unmapped Incidents Alert Banner */}
-      {unmappedIncidents.length > 0 && (
-        <TouchableOpacity
-          style={styles.unmappedBanner}
-          onPress={() => setUnmappedModalVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.unmappedBannerIcon}>⚠️</Text>
-          <Text style={styles.unmappedBannerText}>
-            {unmappedIncidents.length} alert{unmappedIncidents.length > 1 ? 's' : ''} reported without GPS coordinates. Tap to review.
-          </Text>
-          <Text style={styles.unmappedBannerAction}>View →</Text>
-        </TouchableOpacity>
-      )}
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                viewMode === 'list' && [styles.segmentBtnActive, { backgroundColor: colors.navyDark }],
+              ]}
+              onPress={() => setViewMode('list')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: viewMode === 'list' }}
+              accessibilityLabel="List View"
+            >
+              <Text
+                style={[
+                  styles.segmentBtnText,
+                  { color: viewMode === 'list' ? '#FFFFFF' : colors.textSecondary },
+                  viewMode === 'list' && { fontWeight: '800' },
+                ]}
+              >
+                📋 List View ({incidents.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-      {/* Interactive Map View */}
-      <View style={styles.mapWrapper}>
-        <EmergencyMapView
-          incidents={displayedIncidents}
-          userLocation={userLocation}
-          selectedIncident={selectedIncident}
-          onSelectIncident={(incident) => setSelectedIncident(incident)}
-          onMapPress={() => setSelectedIncident(null)}
-        />
-
-        {/* GPS Location Button */}
-        <TouchableOpacity
-          style={[styles.gpsFloatingBtn, shadows.cardElevated]}
-          onPress={handleAcquireUserLocation}
-          disabled={isLocatingUser}
-        >
-          {isLocatingUser ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : (
-            <Text style={styles.gpsFloatingIcon}>🎯</Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Map Incident Counter Pill */}
-        <View style={styles.mapCountPill}>
-          <Text style={styles.mapCountText}>
-            📍 {displayedIncidents.length} Active Incident{displayedIncidents.length === 1 ? '' : 's'} Plotted
-          </Text>
+          <TouchableOpacity
+            style={[
+              styles.myLocationBtn,
+              {
+                backgroundColor: colors.cardBackground,
+                borderColor: colors.border,
+              },
+              shadows.card,
+            ]}
+            onPress={handleAcquireUserLocation}
+            accessibilityRole="button"
+            accessibilityLabel="Acquire GPS position"
+          >
+            {isLocatingUser ? (
+              <ActivityIndicator size="small" color={colors.info} />
+            ) : (
+              <Text style={styles.myLocationIcon}>📍 My GPS</Text>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* Selected Incident Bottom Details Sheet */}
-      {selectedIncident && (
-        <View style={[styles.detailSheet, shadows.cardElevated]}>
-          <View style={styles.detailSheetHeader}>
-            <View style={{ flex: 1 }}>
-              <View style={styles.typeBadgeRow}>
-                <Text style={styles.detailEmergencyType}>
-                  {selectedIncident.emergencyType}
-                </Text>
-                <View
+      {/* Main View Area */}
+      {viewMode === 'map' ? (
+        <View style={styles.mapContainer}>
+          <EmergencyMapView
+            incidents={incidents}
+            userLocation={userLocation}
+            selectedIncident={selectedIncident}
+            onSelectIncident={(inc) => setSelectedIncident(inc)}
+          />
+
+          {/* Unmapped Incidents Floating Drawer Button */}
+          {unmappedIncidents.length > 0 ? (
+            <TouchableOpacity
+              style={[
+                styles.unmappedDrawerBtn,
+                {
+                  backgroundColor: colors.cardBackground,
+                  borderColor: colors.warningBorder,
+                },
+                shadows.cardElevated,
+              ]}
+              activeOpacity={0.85}
+              onPress={() => setUnmappedModalVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`${unmappedIncidents.length} unmapped incidents`}
+            >
+              <Text style={styles.unmappedDrawerIcon}>⚠️</Text>
+              <Text style={[styles.unmappedDrawerText, { color: colors.warningDark }]}>
+                {unmappedIncidents.length} Incident(s) Missing GPS
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : (
+        /* Structured List View */
+        <ScrollView contentContainerStyle={styles.listContainer} showsVerticalScrollIndicator={false}>
+          {incidents.length > 0 ? (
+            incidents.map((incident) => {
+              const incId = incident.alertId || incident.id;
+              const isSelected = selectedIncident && (selectedIncident.alertId || selectedIncident.id) === incId;
+
+              return (
+                <TouchableOpacity
+                  key={incId}
                   style={[
-                    styles.stateBadge,
-                    selectedIncident.deliveryStatus === 'Resolved'
-                      ? styles.resolvedBadge
-                      : styles.activeBadge,
+                    styles.incidentListCard,
+                    {
+                      backgroundColor: colors.cardBackground,
+                      borderColor: isSelected ? colors.info : colors.border,
+                    },
+                    shadows.card,
                   ]}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedIncident(incident)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Incident ${incident.emergencyType}`}
                 >
-                  <Text style={styles.stateBadgeText}>
-                    {selectedIncident.deliveryStatus || 'Pending'}
+                  <View style={styles.listCardTopRow}>
+                    <StatusBadge type="category" value={incident.emergencyType} size="sm" />
+                    <Text style={[styles.listCardTime, { color: colors.textMuted }]}>
+                      {formatTimestamp(incident.createdAt)}
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.listCardSender, { color: colors.textPrimary }]}>
+                    {incident.senderName || 'Anonymous Survivor'}
                   </Text>
-                </View>
-              </View>
-              <Text style={styles.detailAlertId}>
-                ID: {selectedIncident.alertId || selectedIncident.id}
+
+                  <Text style={[styles.listCardCoords, { color: colors.textSecondary }]}>
+                    📍 {Number(incident.latitude).toFixed(4)}°, {Number(incident.longitude).toFixed(4)}°
+                  </Text>
+
+                  {incident.details ? (
+                    <Text style={[styles.listCardDetails, { color: colors.textSecondary }]} numberOfLines={2}>
+                      "{incident.details}"
+                    </Text>
+                  ) : null}
+
+                  <View style={styles.listCardBadgeRow}>
+                    <StatusBadge type="delivery" value={incident.deliveryStatus || 'pending'} size="sm" />
+                    <StatusBadge type="sync" value={incident.syncStatus || 'pending_sync'} size="sm" />
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          ) : (
+            <EmptyState
+              icon="🗺️"
+              title="No Geocoded Incidents"
+              description="No active emergency alerts currently contain valid GPS coordinates."
+              style={{ marginHorizontal: spacing.lg }}
+            />
+          )}
+        </ScrollView>
+      )}
+
+      {/* Selected Incident Bottom Sheet */}
+      {selectedIncident ? (
+        <View
+          style={[
+            styles.bottomSheet,
+            {
+              backgroundColor: colors.cardBackground,
+              borderTopColor: colors.border,
+            },
+            shadows.cardElevated,
+          ]}
+        >
+          <View style={styles.bottomSheetHeader}>
+            <View style={{ flex: 1 }}>
+              <StatusBadge type="category" value={selectedIncident.emergencyType} size="sm" />
+              <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>
+                {selectedIncident.senderName || 'Anonymous Survivor'}
               </Text>
             </View>
+
             <TouchableOpacity
-              style={styles.closeSheetBtn}
               onPress={() => setSelectedIncident(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss incident details"
             >
-              <Text style={styles.closeSheetIcon}>✕</Text>
+              <Text style={[styles.sheetCloseIcon, { color: colors.textMuted }]}>✕</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Coordinates & Timestamps */}
-          <View style={styles.detailMetaGrid}>
-            <View style={styles.detailMetaItem}>
-              <Text style={styles.detailMetaLabel}>COORDINATES</Text>
-              <Text style={styles.detailMetaValue}>
-                {selectedIncident.latitude.toFixed(4)}°, {selectedIncident.longitude.toFixed(4)}°
-              </Text>
-            </View>
-            <View style={styles.detailMetaItem}>
-              <Text style={styles.detailMetaLabel}>REPORTED</Text>
-              <Text style={styles.detailMetaValue}>
-                {formatTimestamp(selectedIncident.createdAt)}
-              </Text>
-            </View>
-          </View>
+          <Text style={[styles.sheetCoords, { color: colors.textSecondary }]}>
+            Coordinates: {Number(selectedIncident.latitude).toFixed(4)}°, {Number(selectedIncident.longitude).toFixed(4)}°
+          </Text>
 
-          {/* Details Narrative */}
           {selectedIncident.details ? (
-            <Text style={styles.detailDescription} numberOfLines={2}>
+            <Text style={[styles.sheetDetails, { color: colors.textPrimary }]} numberOfLines={2}>
               "{selectedIncident.details}"
             </Text>
           ) : null}
 
-          {/* Distinct Separated Lifecycle States */}
-          <View style={styles.statesRow}>
-            <Text style={styles.statePill}>
-              Origin: {selectedIncident.source || 'local'}
-            </Text>
-            <Text style={styles.statePill}>
-              ACK: {selectedIncident.ackStatus || 'unacknowledged'}
-            </Text>
-            <Text style={styles.statePill}>
-              Sync: {selectedIncident.syncStatus || 'pending_sync'}
-            </Text>
-            {selectedIncident.hopCount > 0 ? (
-              <Text style={styles.statePill}>
-                Relay: Hop {selectedIncident.hopCount}
-              </Text>
-            ) : null}
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.sheetActions}>
-            <TouchableOpacity
-              style={styles.navigateBtn}
+          <View style={styles.sheetActionRow}>
+            <PrimaryButton
+              title="Navigate in Maps"
               onPress={() => handleNavigateWithExternalMaps(selectedIncident)}
-            >
-              <Text style={styles.navigateBtnText}>🧭 Navigate with Maps</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.historyBtn}
+              variant="primary"
+              icon="🧭"
+              style={{ flex: 1, marginRight: spacing.sm }}
+            />
+            <PrimaryButton
+              title="View History"
               onPress={() => navigation.navigate('EmergencyHistory')}
-            >
-              <Text style={styles.historyBtnText}>📋 View History</Text>
-            </TouchableOpacity>
+              variant="outline"
+              style={{ flex: 1 }}
+            />
           </View>
         </View>
-      )}
+      ) : null}
 
       {/* Unmapped Incidents Modal */}
       <Modal
+        transparent
+        animationType="fade"
         visible={unmappedModalVisible}
-        animationType="slide"
-        transparent={true}
         onRequestClose={() => setUnmappedModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalOverlay}>
-          <View style={[styles.modalCard, shadows.cardElevated]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Incidents Without GPS Coordinates</Text>
+        <View style={[styles.modalBackdrop, { backgroundColor: colors.overlayBackground }]}>
+          <View
+            style={[
+              styles.unmappedModalCard,
+              {
+                backgroundColor: colors.cardBackground,
+                borderColor: colors.border,
+              },
+              shadows.modal,
+            ]}
+          >
+            <View style={[styles.unmappedModalHeader, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.unmappedModalTitle, { color: colors.textPrimary }]}>
+                Unmapped Emergency Incidents ({unmappedIncidents.length})
+              </Text>
               <TouchableOpacity onPress={() => setUnmappedModalVisible(false)}>
-                <Text style={styles.modalCloseIcon}>✕</Text>
+                <Text style={[styles.closeIcon, { color: colors.textMuted }]}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.modalSubtitle}>
-              These distress signals were created offline or with location omitted by the survivor. They cannot be plotted at an exact map coordinate.
-            </Text>
+            <ScrollView style={styles.unmappedModalBody}>
+              <Text style={[styles.unmappedModalDesc, { color: colors.textSecondary }]}>
+                These distress alerts were created without GPS sensors or with coordinates omitted by the user. They are quarantined here to prevent false (0,0) map placements.
+              </Text>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {unmappedIncidents.map((item) => (
-                <View key={item.alertId || item.id} style={styles.unmappedItemCard}>
-                  <View style={styles.unmappedItemHeader}>
-                    <Text style={styles.unmappedItemType}>{item.emergencyType}</Text>
-                    <Text style={styles.unmappedItemTime}>
-                      {formatTimestamp(item.createdAt)}
-                    </Text>
-                  </View>
-                  <Text style={styles.unmappedItemSender}>
-                    Sender: {item.senderName || 'Anonymous Responder'}
+              {unmappedIncidents.map((inc) => (
+                <View
+                  key={inc.alertId || inc.id}
+                  style={[styles.unmappedItem, { backgroundColor: colors.surfaceSubtle, borderColor: colors.border }]}
+                >
+                  <StatusBadge type="category" value={inc.emergencyType} size="sm" />
+                  <Text style={[styles.unmappedItemSender, { color: colors.textPrimary }]}>
+                    {inc.senderName || 'Anonymous Responder'} · {formatTimestamp(inc.createdAt)}
                   </Text>
-                  {item.details ? (
-                    <Text style={styles.unmappedItemDetails}>"{item.details}"</Text>
+                  {inc.details ? (
+                    <Text style={[styles.unmappedItemDetails, { color: colors.textSecondary }]}>
+                      "{inc.details}"
+                    </Text>
                   ) : null}
-                  <View style={styles.unmappedItemBadgeRow}>
-                    <Text style={styles.locationOmittedBadge}>
-                      📍 Location: Omitted or Unavailable
-                    </Text>
-                    <Text style={styles.unmappedSourceBadge}>
-                      Source: {item.source}
-                    </Text>
-                  </View>
                 </View>
               ))}
             </ScrollView>
+
+            <View style={[styles.unmappedModalFooter, { borderTopColor: colors.border }]}>
+              <PrimaryButton
+                title="Close"
+                onPress={() => setUnmappedModalVisible(false)}
+                variant="secondary"
+              />
+            </View>
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -496,331 +540,229 @@ export const LiveEmergencyMapScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   header: {
-    backgroundColor: colors.cardBackground,
-    paddingTop: Platform.OS === 'android' ? spacing.xl : spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
-  headerTitleRow: {
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  screenTitle: {
+    ...typography.header,
+    fontWeight: '800',
+  },
+  screenSubtitle: {
+    ...typography.caption,
+    marginTop: 2,
+  },
+  telemetryBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.full,
+  },
+  telemetryText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  controlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  segmentedSwitch: {
+    flexDirection: 'row',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    padding: 2,
+    flex: 1,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segmentBtnActive: {
+    elevation: 1,
+  },
+  segmentBtnText: {
+    ...typography.caption,
+  },
+  myLocationBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 36,
+  },
+  myLocationIcon: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  mapContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  listContainer: {
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  incidentListCard: {
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  listCardTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.xs,
   },
-  screenTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: colors.textPrimary,
+  listCardTime: {
+    ...typography.caption,
   },
-  screenSubtitle: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  streamStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  streamStatusText: {
-    fontSize: 11,
+  listCardSender: {
+    ...typography.cardTitle,
     fontWeight: '700',
   },
-  categoryChipsScroll: {
-    paddingVertical: spacing.xs,
-    gap: 6,
+  listCardCoords: {
+    ...typography.caption,
+    marginVertical: 2,
   },
-  categoryChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: 'transparent',
+  listCardDetails: {
+    ...typography.bodySmall,
+    marginVertical: spacing.xs,
+    fontStyle: 'italic',
   },
-  categoryChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+  listCardBadgeRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
   },
-  categoryChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  categoryChipTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  unmappedBanner: {
+  unmappedDrawerBtn: {
+    position: 'absolute',
+    bottom: spacing.md,
+    left: spacing.lg,
+    right: spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FDE68A',
-  },
-  unmappedBannerIcon: {
-    fontSize: 16,
-    marginRight: 6,
-  },
-  unmappedBannerText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#92400E',
-    fontWeight: '600',
-  },
-  unmappedBannerAction: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#B45309',
-  },
-  mapWrapper: {
-    flex: 1,
-    position: 'relative',
-  },
-  gpsFloatingBtn: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.border,
   },
-  gpsFloatingIcon: {
-    fontSize: 22,
+  unmappedDrawerIcon: {
+    fontSize: 14,
+    marginRight: spacing.sm,
   },
-  mapCountPill: {
+  unmappedDrawerText: {
+    ...typography.caption,
+    fontWeight: '800',
+  },
+  bottomSheet: {
     position: 'absolute',
-    top: 12,
-    left: 12,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  mapCountText: {
-    fontSize: 11,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  detailSheet: {
-    backgroundColor: colors.cardBackground,
-    padding: spacing.md,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: spacing.lg,
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
-    maxHeight: 280,
   },
-  detailSheetHeader: {
+  bottomSheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: spacing.xs,
   },
-  typeBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  detailEmergencyType: {
-    fontSize: 17,
+  sheetTitle: {
+    ...typography.cardTitle,
     fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  stateBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  activeBadge: {
-    backgroundColor: '#FEE2E2',
-  },
-  resolvedBadge: {
-    backgroundColor: '#DCFCE7',
-  },
-  stateBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  detailAlertId: {
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: colors.textMuted,
     marginTop: 2,
   },
-  closeSheetBtn: {
-    padding: 4,
-  },
-  closeSheetIcon: {
+  sheetCloseIcon: {
     fontSize: 18,
-    color: colors.textMuted,
-  },
-  detailMetaGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: spacing.xs,
-    paddingVertical: 4,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  detailMetaItem: {
-    flex: 1,
-  },
-  detailMetaLabel: {
-    fontSize: 10,
     fontWeight: '700',
-    color: colors.textMuted,
+    padding: spacing.xs,
   },
-  detailMetaValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+  sheetCoords: {
+    ...typography.caption,
+    marginBottom: 4,
   },
-  detailDescription: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontStyle: 'italic',
-    marginVertical: 4,
+  sheetDetails: {
+    ...typography.bodySmall,
+    marginBottom: spacing.md,
   },
-  statesRow: {
+  sheetActionRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginVertical: spacing.xs,
   },
-  statePill: {
-    fontSize: 10,
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  sheetActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: spacing.xs,
-  },
-  navigateBtn: {
-    flex: 1.2,
-    backgroundColor: '#2563EB',
-    paddingVertical: 8,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  navigateBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  historyBtn: {
-    flex: 0.8,
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 8,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  historyBtnText: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  modalOverlay: {
+  modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalCard: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: spacing.lg,
-    maxHeight: '80%',
   },
-  modalHeader: {
+  unmappedModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '80%',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  unmappedModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    padding: spacing.md,
+    borderBottomWidth: 1,
   },
-  modalTitle: {
-    fontSize: 17,
+  unmappedModalTitle: {
+    ...typography.cardTitle,
     fontWeight: '800',
-    color: colors.textPrimary,
   },
-  modalCloseIcon: {
+  closeIcon: {
     fontSize: 18,
-    color: colors.textMuted,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginVertical: spacing.sm,
-  },
-  unmappedItemCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  unmappedItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  unmappedItemType: {
-    fontSize: 14,
     fontWeight: '700',
-    color: colors.textPrimary,
+    padding: spacing.xs,
   },
-  unmappedItemTime: {
-    fontSize: 11,
-    color: colors.textMuted,
+  unmappedModalBody: {
+    padding: spacing.md,
+  },
+  unmappedModalDesc: {
+    ...typography.caption,
+    marginBottom: spacing.md,
+    lineHeight: 16,
+  },
+  unmappedItem: {
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
   },
   unmappedItemSender: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
+    ...typography.caption,
+    fontWeight: '700',
+    marginTop: 4,
   },
   unmappedItemDetails: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    color: colors.textPrimary,
+    ...typography.bodySmall,
     marginTop: 2,
+    fontStyle: 'italic',
   },
-  unmappedItemBadgeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: spacing.xs,
-  },
-  locationOmittedBadge: {
-    fontSize: 10,
-    color: '#B45309',
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    fontWeight: '600',
-  },
-  unmappedSourceBadge: {
-    fontSize: 10,
-    color: colors.textMuted,
+  unmappedModalFooter: {
+    padding: spacing.md,
+    borderTopWidth: 1,
   },
 });
+
+export default LiveEmergencyMapScreen;
