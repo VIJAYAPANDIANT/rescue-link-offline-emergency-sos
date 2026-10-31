@@ -5,8 +5,9 @@
 [![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2052-orange.svg)](https://expo.dev/)
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
+[![Tests](https://img.shields.io/badge/Tests-62%2F62%20Passed%20(100%25)-brightgreen.svg)](docs/TESTING_REPORT.md)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–13 Completed: Complete UI/UX Enhancement, Design System & Professional Application Redesign)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–14 Completed: Complete Technical Documentation Suite, 10 Mermaid Architecture Diagrams, Testing Reports, Presentation & Academic Viva Guide)**
 
 ---
 
@@ -1208,10 +1209,50 @@ cd server && npm test
   - Mobile screens redesigned: Home (readiness cards & recent activity), Send SOS (multi-stage progress & consent gate), Nearby Devices (RSSI metrics & permission guidance), History (search & category filters), Contacts (priority badges & privacy notice), Map (segmented map/list toggle), Settings (profile, theme, relay, gateway)
   - Admin dashboard responsive redesign: Mobile drawer navigation with hamburger toggle, accessible focus rings, and dark navy aesthetic
   - Full automated integration test suite: Module 11 (3 tests, **62 passing tests / 62 total across 11 modules (100% pass rate)**)
+- [x] **Step 14: Complete Project Documentation, Architecture Diagrams, Technical Reports, and Presentation Preparation** (Completed)
+  - Professional, comprehensive `docs/` technical documentation suite authored:
+    - [Project Overview](docs/PROJECT_OVERVIEW.md) — Mission, architectural pillars, personas & executive summary
+    - [Problem Statement & Motivation](docs/PROBLEM_STATEMENT.md) — Disaster grid breakdown, single points of failure & research gaps
+    - [System Requirements Specification](docs/SYSTEM_REQUIREMENTS.md) — Functional (FR1–10) & Non-functional (NFR1–8) requirements, Android permissions & hardware specs
+    - [System Architecture Specification](docs/SYSTEM_ARCHITECTURE.md) — Complete architecture guide containing all 10 core Mermaid diagrams
+    - [Database Design & Data Architecture](docs/DATABASE_DESIGN.md) — SQLite WAL schema, tables, indexes, v1–v4 migrations & backend stores with Mermaid ER diagram
+    - [API Documentation](docs/API_DOCUMENTATION.md) — Complete REST & SSE endpoints with payloads, schemas, auth rules & sanitized examples
+    - [BLE Communication Protocol](docs/BLE_COMMUNICATION.md) — Protocol v2, 512-byte MTU, FNV-1a checksum, GATT profiles & relay admission engine
+    - [Offline Sync Workflow & Outbox Engine](docs/OFFLINE_SYNC_WORKFLOW.md) — Outbox pattern, NetInfo reachability probes & exponential backoff with jitter
+    - [Security, Threat Model & Privacy](docs/SECURITY_AND_PRIVACY.md) — STRIDE threat matrix, bcrypt (10 rounds), JWT, RBAC & credential stripping
+    - [Verification & Testing Report](docs/TESTING_REPORT.md) — Detailed 62-case automated test execution report (100% passing) and physical testing protocols
+    - [Production Deployment Guide](docs/DEPLOYMENT_GUIDE.md) — Containerized Docker, PaaS (Render/Railway), Systemd, Vite CDN & EAS Android build guide
+    - [Known Limitations & Constraints](docs/KNOWN_LIMITATIONS.md) — Life-safety PSAP disclaimer, BLE attenuation, 512-byte MTU & OS background constraints
+    - [Future Enhancements Roadmap](docs/FUTURE_ENHANCEMENTS.md) — Curve25519 E2EE, PostgreSQL/PostGIS clustering, Meshtastic LoRaWAN bridging & Opus audio
+    - [Presentation Outline Deck](docs/PRESENTATION_OUTLINE.md) — 18-slide academic defense presentation structure with speaker talking notes
+    - [Viva Examination Q&A Guide](docs/VIVA_QUESTIONS.md) — In-depth technical questions & answers covering all 13 core architectural domains
+  - All 10 requested Mermaid diagrams validated and synchronized with live codebase
+  - 100% automated test suite verified (62/62 tests passing cleanly in ~11 seconds)
 - [ ] **Future Enhancements (Post-Prototype)**
   - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
   - Multi-region clustered WebSocket gateways for global PSAP ingestion dispatch
 
+---
+
+## 📚 Complete Technical Documentation Directory
+
+| Document | Primary Focus & Coverage |
+|---|---|
+| [**PROJECT_OVERVIEW.md**](docs/PROJECT_OVERVIEW.md) | High-level system executive summary, user personas, and core technical pillars. |
+| [**PROBLEM_STATEMENT.md**](docs/PROBLEM_STATEMENT.md) | Disaster grid vulnerability analysis, historical evidence, and the communication abyss. |
+| [**SYSTEM_REQUIREMENTS.md**](docs/SYSTEM_REQUIREMENTS.md) | Functional (FR1–10) and non-functional (NFR1–8) requirements, OS/hardware specs, and Android permissions. |
+| [**SYSTEM_ARCHITECTURE.md**](docs/SYSTEM_ARCHITECTURE.md) | 10 comprehensive Mermaid architecture diagrams covering System, Mobile, Backend, Admin, BLE, Relay, SQLite, Sync, Notifications, and Incident Lifecycle. |
+| [**DATABASE_DESIGN.md**](docs/DATABASE_DESIGN.md) | SQLite WAL mode schema, versioned migrations (v1–v4), backend atomic JSON stores, and Mermaid ER diagram. |
+| [**API_DOCUMENTATION.md**](docs/API_DOCUMENTATION.md) | Complete RESTful and SSE API reference with request/response schemas, security headers, and rate limits. |
+| [**BLE_COMMUNICATION.md**](docs/BLE_COMMUNICATION.md) | Bluetooth Low Energy GATT architecture, Protocol v2, 512-byte MTU limit, and FNV-1a checksum. |
+| [**OFFLINE_SYNC_WORKFLOW.md**](docs/OFFLINE_SYNC_WORKFLOW.md) | Offline outbox queue, two-tier network reachability verification, exponential backoff, and relay attribution. |
+| [**SECURITY_AND_PRIVACY.md**](docs/SECURITY_AND_PRIVACY.md) | STRIDE threat model, bcrypt hashing, JWT validation, RBAC route guards, and recipient privacy masking. |
+| [**TESTING_REPORT.md**](docs/TESTING_REPORT.md) | Automated 62-case verification matrix (100% pass rate) and multi-device physical manual testing protocols. |
+| [**DEPLOYMENT_GUIDE.md**](docs/DEPLOYMENT_GUIDE.md) | Production deployment manual for Docker, Cloud PaaS, Linux Systemd, Vite static hosting, and EAS Android builds. |
+| [**KNOWN_LIMITATIONS.md**](docs/KNOWN_LIMITATIONS.md) | PSAP non-certification disclaimer, BLE radio physics, OS background constraints, and scaling bounds. |
+| [**FUTURE_ENHANCEMENTS.md**](docs/FUTURE_ENHANCEMENTS.md) | Architectural evolution: Curve25519 E2EE, PostgreSQL/PostGIS clustering, LoRaWAN bridging, and AI triage. |
+| [**PRESENTATION_OUTLINE.md**](docs/PRESENTATION_OUTLINE.md) | 18-slide academic capstone presentation outline with bullet points and presenter talking scripts. |
+| [**VIVA_QUESTIONS.md**](docs/VIVA_QUESTIONS.md) | In-depth technical viva examination questions & answers covering all 13 core architectural domains. |
 
 ---
 
