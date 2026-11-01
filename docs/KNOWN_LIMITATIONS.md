@@ -2,8 +2,8 @@
 
 **Document:** System Boundaries, Hardware Prerequisites & Technical Constraints  
 **Project:** RescueLink — Offline Bluetooth Emergency SOS System  
-**Version:** 1.0.0 (Production Hardening)  
-**Date:** October 2026  
+**Version:** 1.0.0-RC1 (Step 19 Final QA Audit)  
+**Date:** November 2026  
 
 ---
 

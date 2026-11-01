@@ -146,11 +146,11 @@ async function runComprehensiveTestSuite() {
   await startEphemeralServer();
   apiClient.setBaseUrl(testServerBaseUrl);
 
-  const initialAlerts = await alertStore.readAlerts();
-  const initialUsers = await userStore.readUsers();
-  const initialContacts = await contactStore.readContacts();
-  const initialNotifications = await notificationStore.readNotifications();
-  const initialAuditLogs = await auditStore.readLogs();
+  const initialAlerts = JSON.parse(JSON.stringify(await alertStore.readAlerts()));
+  const initialUsers = JSON.parse(JSON.stringify(await userStore.readUsers()));
+  const initialContacts = JSON.parse(JSON.stringify(await contactStore.readContacts()));
+  const initialNotifications = JSON.parse(JSON.stringify(await notificationStore.readNotifications()));
+  const initialAuditLogs = JSON.parse(JSON.stringify(await auditStore.readLogs()));
 
   try {
     // =========================================================================
