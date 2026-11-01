@@ -1,15 +1,46 @@
-# RescueLink — Offline Bluetooth Emergency SOS System
+<div align="center">
 
-[![Release](https://img.shields.io/badge/Release-v1.0.0--RC1-blueviolet.svg)](docs/RELEASE_NOTES.md)
-[![Tests](https://img.shields.io/badge/Tests-62%2F62%20Passed%20(100%25)-brightgreen.svg)](docs/FINAL_TEST_REPORT.md)
-[![Expo SDK](https://img.shields.io/badge/Expo-SDK%2052-orange.svg)](https://expo.dev/)
-[![React Native](https://img.shields.io/badge/React%20Native-0.76.7-blue.svg)](https://reactnative.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-v18--v24%20LTS-green.svg)](https://nodejs.org/)
-[![Storage](https://img.shields.io/badge/Offline%20Storage-expo--sqlite%20WAL-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
-[![BLE](https://img.shields.io/badge/Wireless-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
-[![Architecture](https://img.shields.io/badge/Architecture-Epidemic%20Relay%20Mesh-teal.svg)](docs/SYSTEM_ARCHITECTURE.md)
+# 🚨 RescueLink
 
-> **A decentralized, disaster-resilient peer-to-peer mesh and emergency response platform designed to empower civilian distress signaling and automated dispatch during complete cellular, electrical, and commercial internet infrastructure failure.**
+### Offline Bluetooth Low Energy Emergency SOS & Epidemic Mesh Relay System
+
+**A decentralized, disaster-resilient peer-to-peer mesh and emergency response platform designed to empower civilian distress signaling and automated dispatch during complete cellular, electrical, and commercial internet infrastructure failure.**
+
+---
+
+[![Release](https://img.shields.io/badge/Release-v1.0.0--RC1-7C3AED?style=for-the-badge&logo=git&logoColor=white)](docs/RELEASE_NOTES.md)
+[![Tests](https://img.shields.io/badge/Tests-62%2F62%20Passed%20(100%25)-059669?style=for-the-badge&logo=checkmarx&logoColor=white)](docs/FINAL_TEST_REPORT.md)
+[![Expo SDK](https://img.shields.io/badge/Expo-SDK%2052-000000?style=for-the-badge&logo=expo&logoColor=white)](https://expo.dev/)
+[![React Native](https://img.shields.io/badge/React%20Native-0.76.7-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactnative.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-v18--v24%20LTS-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Storage](https://img.shields.io/badge/Storage-expo--sqlite%20WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
+[![BLE](https://img.shields.io/badge/Wireless-Bluetooth%20Low%20Energy-0082FC?style=for-the-badge&logo=bluetooth&logoColor=white)](https://github.com/dotintent/react-native-ble-plx)
+[![Architecture](https://img.shields.io/badge/Architecture-Epidemic%20Relay%20Mesh-0D9488?style=for-the-badge&logo=diagramsdotnet&logoColor=white)](docs/SYSTEM_ARCHITECTURE.md)
+
+<p align="center">
+  <a href="#12-installation--setup-instructions">⚡ Quick Start</a> •
+  <a href="#6-system-architecture">🏛️ Architecture</a> •
+  <a href="#8-bluetooth-low-energy-ble-communication-workflow">📡 BLE Protocol</a> •
+  <a href="#16-automated-testing--quality-assurance">🧪 Test Matrix</a> •
+  <a href="#14-android-compilation--sideloading">📱 Android Build</a> •
+  <a href="#-technical-documentation-directory">📚 Full Documentation</a>
+</p>
+
+</div>
+
+---
+
+## ⚡ Core Engineering Highlights
+
+| Feature Dimension | Technical Specification | Operational Impact |
+|---|---|---|
+| **Zero-Infrastructure Mesh** | Custom 128-bit GATT profile on 2.4 GHz ISM band (`0000FEF0-...`) | Direct peer-to-peer distress signaling when cellular towers and power grids collapse |
+| **Durable WAL Persistence** | `expo-sqlite` (v15.1.4) with Write-Ahead Logging & versioned migrations (v1–v4) | Zero distress draft loss upon sudden process kill, OS doze, or battery exhaustion |
+| **Tamper-Evident Relay** | 32-bit FNV-1a checksum over canonical fields ($Offset = 2166136261$, $Prime = 16777619$) | Detects malicious alteration of coordinates or incident text during multi-hop forwarding |
+| **5-Stage Admission Filter** | Integrity check, 24h TTL check, loop prevention, hop limit ($\le 3$), rate limiter | Prevents broadcast storms, infinite relay loops, and radio battery exhaustion |
+| **Two-Tier Cloud Sync** | Link-layer NetInfo monitoring coupled with active HTTP `/api/health` validation probes | Bypasses dead captive portals; flushes outbox with exponential backoff and jitter |
+| **Automated Dispatch** | Nodemailer (SMTP) and Twilio (SMS) pipelines with PII telemetry masking | Alerts trusted contacts with GPS location links while masking public phone/email logs |
+| **Live Command Operations**| React 18, Vite 6, and Tailwind CSS dashboard with SSE live incident stream | Incident triage, spatial coordinate radar, account controls, and audit logging |
 
 ---
 
@@ -39,29 +70,44 @@
 
 ## 1. Project Overview
 
-**RescueLink** is an offline-first mobile emergency distress response system. During major catastrophic disasters—such as earthquakes, cyclones, flash floods, wilderness emergencies, or power grid collapse—telecommunications infrastructure and commercial internet services are frequently severed.
+**RescueLink** is an offline-first mobile emergency distress response system designed for extreme disaster environments. During catastrophic natural disasters (earthquakes, cyclones, flash floods, landslides) or regional electrical grid failures, commercial telecommunications infrastructure often collapses completely.
 
-RescueLink bridges this communication gap by transforming everyday civilian smartphones into decentralized **Bluetooth Low Energy (BLE) transceivers**. When a victim triggers an SOS, the alert is instantly committed to local, durable SQLite storage, stripped of private credentials, and broadcast over 2.4 GHz radio frequencies using a custom GATT service profile. Nearby participating civilian devices receive, verify, and relay the distress beacon across a multi-hop epidemic mesh. As soon as any participating handset encounters network connectivity (such as an emergency satellite truck, mesh gateway, or restored cell tower), the collected outbox backlog is opportunistically synchronized to the central cloud backend. The backend dispatches automated Email (SMTP) and SMS (Twilio) alerts to designated emergency contacts, broadcasts live Server-Sent Events (SSE) to responder map displays, and provides a centralized web command center for operations monitoring.
+RescueLink bridges this survival gap by converting ordinary civilian smartphones into decentralized **Bluetooth Low Energy (BLE) transceivers**. When a victim triggers an SOS, the alert is instantly committed to local SQLite storage with Write-Ahead Logging (`WAL`), stripped of private credentials, and broadcast over 2.4 GHz radio frequencies using a custom GATT service profile. 
+
+Nearby civilian handsets automatically discover, verify, and forward the distress beacon across a multi-hop epidemic mesh. As soon as any participating handset encounters network reachability (such as an emergency satellite truck, Wi-Fi base, or restored cellular tower), the collected outbox backlog is opportunistically synchronized to the central cloud backend. The backend dispatches automated Email (SMTP) and SMS (Twilio) alerts to designated emergency contacts, streams real-time incident telemetry via Server-Sent Events (SSE) to responder map displays, and renders a live operational overview on the web command center.
 
 > [!IMPORTANT]
-> **Safety & Ethical Notice:**  
-> RescueLink is an academic capstone and open-source systems engineering research project. While it implements real peer-to-peer radio protocols, durable SQLite Write-Ahead Logging, and multi-channel notifications, it is **not certified by government Public Safety Answering Points (PSAPs)**. It does not replace official 911 / 112 emergency services. In active emergencies where cellular connectivity exists, always dial official authorities first.
+> **Safety & Regulatory Disclaimer:**  
+> RescueLink is an academic capstone and open-source systems engineering research project. While it implements real peer-to-peer radio protocols, durable SQLite Write-Ahead Logging, and multi-channel notifications, it is **not certified by government Public Safety Answering Points (PSAPs)**. It does not replace official 911 / 112 emergency dispatch services. In active emergencies where commercial telecommunications are functional, always contact official authorities first.
 
 ---
 
 ## 2. Problem Statement
 
-Conventional emergency response architectures suffer from critical structural dependencies:
-1. **Single Point of Failure (SPOF):** Civilian emergency reporting relies entirely on active cellular towers, fiber backhauls, and commercial cloud servers. When high-wind storms or seismic shocks destroy local base stations, civilian phones become completely isolated.
+Conventional emergency communication systems rely on centralized, infrastructure-dependent assumptions that fail catastrophically during disasters:
+
+```
+[Traditional Emergency Pipeline — Vulnerable to Single Point of Failure]
+Civilian Phone ──(Cellular Tower)──► Fiber Backhaul ──(Central Cloud)──► Emergency Dispatch
+      ▲                                   ▲
+      │                                   │
+[STORM / EARTHQUAKE DESTROYS TOWER]   [FLOOD DESTROYS POWER GRID / FIBER]
+      │                                   │
+      ▼                                   ▼
+[TOTAL CIVILIAN ISOLATION]          [NO EMERGENCY COMMUNICATION POSSIBLE]
+```
+
+1. **Single Point of Failure (SPOF):** Civilian emergency reporting relies entirely on active cellular towers, backhauls, and commercial cloud servers. When high-wind storms or earthquakes destroy local towers, civilian phones become completely isolated.
 2. **Data Loss During Battery Starvation:** Mobile applications without transactional write-ahead local storage lose unsent distress drafts upon app crash, system out-of-memory kills, or battery depletion.
-3. **Lack of Peer-to-Peer Interoperability:** Smartphones in close physical proximity to one another (e.g., across rubble, within a collapsed tunnel, or on hiking trails) cannot communicate distress states without traversing distant cloud gateways.
+3. **Lack of Peer-to-Peer Interoperability:** Smartphones in close physical proximity to one another (e.g., across building rubble, within a collapsed tunnel, or on hiking trails) cannot communicate distress states without traversing distant cloud gateways.
 4. **Captive Portal & Fragile Network Transitions:** Traditional mobile network monitors fail when connected to dead Wi-Fi routers or captive portals that report link-layer connectivity without true internet reachability, trapping unsent distress messages in deadlocks.
 
 ---
 
 ## 3. Proposed Solution
 
-RescueLink eliminates infrastructure dependencies through an integrated, defense-in-depth architecture:
+RescueLink eliminates single points of failure through a decentralized, defense-in-depth architecture:
+
 - **Zero-Internet Local Persistence:** Every emergency action is immediately committed to an embedded SQLite database configured with Write-Ahead Logging (`PRAGMA journal_mode = WAL`) and versioned schema migrations (v1 to v4).
 - **Dual-Role GATT Bluetooth Signaling:** Operates as both a GATT Peripheral (broadcasting 512-byte MTU distress beacons) and a GATT Central (scanning for nearby survivor signals) over custom 128-bit UUIDs.
 - **Epidemic Multi-Device Mesh Relay:** A 5-stage admission control pipeline validates 32-bit FNV-1a checksums, enforces 24-hour message expiration (TTL), prevents loops, throttles forwarding rates, and bounds hop counts ($\le 3$).
@@ -486,7 +532,7 @@ RESCUELINK AUTOMATED TEST SUITE EXECUTION SUMMARY
 ======================================================================
 ```
 
-*For complete test case specifications and physical validation procedures, see [`docs/FINAL_TEST_REPORT.md`](docs/FINAL_TEST_REPORT.md).*
+*For complete test case specifications and physical validation procedures, see [`docs/FINAL_TEST_REPORT.md`](docs/FINAL_TEST_REPORT.md) and [`docs/FINAL_QA_REPORT.md`](docs/FINAL_QA_REPORT.md).*
 
 ---
 
@@ -555,7 +601,7 @@ RescueLink is built with gratitude upon the following open-source libraries:
 
 | Document | Description |
 |---|---|
-| [**FINAL_QA_REPORT.md**](docs/FINAL_QA_REPORT.md) | Master quality audit report, 10-step SOS workflow review, and benchmarks. |
+| [**FINAL_QA_REPORT.md**](docs/FINAL_QA_REPORT.md) | Master quality audit report, 10-step SOS workflow review, and live benchmarks. |
 | [**FEATURE_VERIFICATION_MATRIX.md**](docs/FEATURE_VERIFICATION_MATRIX.md) | Exhaustive feature-by-feature implementation and verification status audit. |
 | [**RELEASE_NOTES.md**](docs/RELEASE_NOTES.md) | Release candidate highlights, boundaries, and system specifications. |
 | [**RELEASE_CHECKLIST.md**](docs/RELEASE_CHECKLIST.md) | Comprehensive 6-part pre-flight verification audit. |
