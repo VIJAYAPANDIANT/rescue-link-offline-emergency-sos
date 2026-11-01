@@ -8,7 +8,7 @@
 [![Tests](https://img.shields.io/badge/Tests-62%2F62%20Passed%20(100%25)-brightgreen.svg)](docs/FINAL_TEST_REPORT.md)
 [![Release](https://img.shields.io/badge/Release-v1.0.0--RC1-blueviolet.svg)](docs/RELEASE_NOTES.md)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–16 Completed: Final Bug Fixes, Integration Validation, Release Candidate v1.0.0-RC1 & Android Build Preparation)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–17 Completed: Android APK/AAB Build Verification, Physical Device Sideloading & Testing Readiness)**
 
 ---
 
@@ -1260,6 +1260,16 @@ cd server && npm test
     - [Release Checklist](docs/RELEASE_CHECKLIST.md) — Pre-flight audit covering code hygiene, security, and builds
     - [Bug Fix Report](docs/BUG_FIX_REPORT.md) — Root cause analysis and resolution documentation for all 6 defects
     - [Android Build Guide](docs/ANDROID_BUILD_GUIDE.md) — Gradle local build and EAS Cloud APK compilation guide
+- [x] **Step 17: Android APK/AAB Build & Release Verification** (Completed)
+  - Verified Expo Managed Workflow with Continuous Native Generation (CNG) via Config Plugins
+  - Confirmed Expo Go incompatibility due to native C++/Java BLE drivers (`react-native-ble-plx`, `react-native-ble-peripheral`)
+  - Validated Android manifest permissions across Android 8 through Android 14 (`BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, `BLUETOOTH_ADVERTISE`, `ACCESS_FINE_LOCATION`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`)
+  - Configured multi-target build profiles in `mobile/eas.json` (`development`, `preview`, `preview-prod`, `production`)
+  - Verified configuration parsing via Expo CLI (`npx expo config`) with zero schema errors
+  - Executed full 62/62 regression test suite with 100% pass rate
+  - Authored physical device deployment documentation:
+    - [Android Installation Guide](docs/ANDROID_INSTALLATION_GUIDE.md) — Sideloading, ADB commands, runtime permissions, and local gateway setup
+    - [Physical Device Testing Protocol](docs/PHYSICAL_DEVICE_TESTING.md) — Multi-device field testing protocols, 3-tier test distinction, and edge scenarios
 - [ ] **Future Enhancements (Post-Prototype)**
   - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
   - Multi-region clustered WebSocket gateways for global PSAP ingestion dispatch
@@ -1271,9 +1281,11 @@ cd server && npm test
 | Document | Primary Focus & Coverage |
 |---|---|
 | [**RELEASE_NOTES.md**](docs/RELEASE_NOTES.md) | **v1.0.0-RC1 Release Notes**: System capabilities, bug fixes, known boundaries, and run commands. |
-| [**RELEASE_CHECKLIST.md**](docs/RELEASE_CHECKLIST.md) | **Production Release Checklist**: 5-part pre-flight verification audit covering tests, security, and packaging. |
+| [**RELEASE_CHECKLIST.md**](docs/RELEASE_CHECKLIST.md) | **Production Release Checklist**: 6-part pre-flight verification audit covering tests, security, Android builds, and packaging. |
+| [**ANDROID_BUILD_GUIDE.md**](docs/ANDROID_BUILD_GUIDE.md) | **Android Release Compilation Guide**: Native BLE permissions, Gradle local build, EAS build profiles, and signing security. |
+| [**ANDROID_INSTALLATION_GUIDE.md**](docs/ANDROID_INSTALLATION_GUIDE.md) | **Physical Sideloading & Setup Manual**: ADB installation, on-device sideloading, runtime permissions, and LAN gateway pairing. |
+| [**PHYSICAL_DEVICE_TESTING.md**](docs/PHYSICAL_DEVICE_TESTING.md) | **Hardware Field Test Protocols**: 3-tier test matrix, 8 physical test cases, multi-device relay, and evidence collection. |
 | [**BUG_FIX_REPORT.md**](docs/BUG_FIX_REPORT.md) | **Integration Defect Report**: Root cause analysis and resolution verification for all 6 identified bugs. |
-| [**ANDROID_BUILD_GUIDE.md**](docs/ANDROID_BUILD_GUIDE.md) | **Android Release Compilation Guide**: Native BLE permissions, Gradle local build, and EAS standalone APK build. |
 | [**FINAL_PROJECT_EVALUATION.md**](docs/FINAL_PROJECT_EVALUATION.md) | **Master Project Evaluation Report**: Complete 16-section capstone evaluation, feature verification matrix, and live benchmark metrics. |
 | [**FINAL_TEST_REPORT.md**](docs/FINAL_TEST_REPORT.md) | **Comprehensive Testing Ledger**: 62 automated test cases with preconditions, steps, expected/actual results, and physical testing protocols. |
 | [**PROJECT_DEMO_SCRIPT.md**](docs/PROJECT_DEMO_SCRIPT.md) | **Academic Defense Scripts**: 5-minute quick demo script and 10-minute deep-dive technical demonstration for examiners. |
