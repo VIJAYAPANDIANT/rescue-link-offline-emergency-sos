@@ -174,6 +174,9 @@ class SyncService {
           originalSenderName: localAlert.senderName,
           createdAt: localAlert.createdAt,
           status: localAlert.deliveryStatus === 'Resolved' ? 'Resolved' : 'Pending',
+          hopCount: typeof localAlert.hopCount === 'number' ? localAlert.hopCount : 0,
+          forwarderId: localAlert.forwarderId || null,
+          originalSenderId: localAlert.originalSenderId || null,
         });
       }
 

@@ -1,6 +1,7 @@
 {
   "name": "rescuelink-mobile",
   "version": "1.0.0",
+  "type": "module",
   "main": "App.js",
   "scripts": {
     "start": "expo start",

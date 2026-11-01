@@ -45,10 +45,17 @@ const config = {
    */
   validateEnvironment() {
     const warnings = [];
+    const fatalErrors = [];
 
-    if (this.isProduction && this.jwt.secret === defaultDevSecret) {
+    if (this.isProduction) {
+      if (this.jwt.secret === defaultDevSecret || this.jwt.secret.length < 32) {
+        fatalErrors.push(
+          'CRITICAL SECURITY ERROR: In production mode, JWT_SECRET must be set to a secure, non-default string of at least 32 characters (e.g. generate via `openssl rand -hex 32`).'
+        );
+      }
+    } else if (this.jwt.secret === defaultDevSecret) {
       warnings.push(
-        'CRITICAL: JWT_SECRET is using the insecure default dev key in production. Set a unique, high-entropy JWT_SECRET.'
+        'SECURITY NOTICE: JWT_SECRET is using the insecure default development key. Set a unique secret before deploying.'
       );
     }
 
@@ -64,8 +71,16 @@ const config = {
       console.warn('====================================================');
     }
 
+    if (fatalErrors.length > 0) {
+      console.error('====================================================');
+      console.error(' [FATAL PRODUCTION CONFIGURATION AUDIT ERRORS]');
+      fatalErrors.forEach((err) => console.error(` - ${err}`));
+      console.error('====================================================');
+      throw new Error(fatalErrors.join(' '));
+    }
+
     return {
-      valid: warnings.length === 0,
+      valid: warnings.length === 0 && fatalErrors.length === 0,
       warnings,
     };
   },

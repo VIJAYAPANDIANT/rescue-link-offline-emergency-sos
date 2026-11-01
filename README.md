@@ -6,8 +6,9 @@
 [![SQLite](https://img.shields.io/badge/Storage-expo--sqlite%20v15-blue.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![BLE](https://img.shields.io/badge/Mesh-Bluetooth%20Low%20Energy-brightgreen.svg)](https://github.com/dotintent/react-native-ble-plx)
 [![Tests](https://img.shields.io/badge/Tests-62%2F62%20Passed%20(100%25)-brightgreen.svg)](docs/FINAL_TEST_REPORT.md)
+[![Release](https://img.shields.io/badge/Release-v1.0.0--RC1-blueviolet.svg)](docs/RELEASE_NOTES.md)
 
-> **Major Project — Comprehensive Staged Implementation (Steps 1–15 Completed: Final End-to-End Demonstration, Evidence Collection, Performance Benchmarks & College Project Evaluation Preparation)**
+> **Major Project — Comprehensive Staged Implementation (Steps 1–16 Completed: Final Bug Fixes, Integration Validation, Release Candidate v1.0.0-RC1 & Android Build Preparation)**
 
 ---
 
@@ -1244,6 +1245,21 @@ cd server && npm test
   - [Final Project Evaluation Report](docs/FINAL_PROJECT_EVALUATION.md) — 16-section capstone evaluation report with verified performance benchmarks
   - Real performance benchmark measurements verified: 33.14 ms cold server startup, 4.16 ms `/api/health`, 13.33 ms alert creation, and 0.66 ms SQLite 500-record query
   - Expanded [Viva Questions Guide](docs/VIVA_QUESTIONS.md) to 30 comprehensive questions spanning all 12 evaluation domains
+- [x] **Step 16: Final Bug Fixes, Integration Validation, and Release Candidate Preparation** (Completed)
+  - Resolved all identified defects across Critical, High, Medium, and Low priorities:
+    - **BUG-01 (Critical):** Fixed Vite dev proxy port mismatch in `admin/vite.config.js` and `admin/.env.example` (target: port 5000)
+    - **BUG-02 (High):** Fixed relayed alert routing metadata transmission (`hopCount`, `forwarderId`, `originalSenderId`) in `mobile/src/services/sync/syncService.js`
+    - **BUG-03 (High):** Hardened production startup in `server/config/env.js` to enforce $\ge 32$-character non-default `JWT_SECRET`
+    - **BUG-04 (Medium):** Configured `versionCode: 1` and foreground service permissions (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`) in `mobile/app.json`
+    - **BUG-05 (Medium):** Authored `mobile/eas.json` with development, preview (standalone APK), and production (AAB) build profiles
+    - **BUG-06 (Low):** Added `"type": "module"` to `mobile/package.json` to eliminate Node.js typeless import warnings
+  - Executed full integration regression test suite: **62/62 tests passing (100% pass rate)**
+  - Verified Admin Dashboard Vite production build (built cleanly in 10.71s)
+  - Authored release candidate documentation suite:
+    - [Release Notes v1.0.0-RC1](docs/RELEASE_NOTES.md) — Release highlights, resolved bugs, and evaluation guidance
+    - [Release Checklist](docs/RELEASE_CHECKLIST.md) — Pre-flight audit covering code hygiene, security, and builds
+    - [Bug Fix Report](docs/BUG_FIX_REPORT.md) — Root cause analysis and resolution documentation for all 6 defects
+    - [Android Build Guide](docs/ANDROID_BUILD_GUIDE.md) — Gradle local build and EAS Cloud APK compilation guide
 - [ ] **Future Enhancements (Post-Prototype)**
   - End-to-end Curve25519 asymmetric encryption for BLE characteristic payloads
   - Multi-region clustered WebSocket gateways for global PSAP ingestion dispatch
@@ -1254,6 +1270,10 @@ cd server && npm test
 
 | Document | Primary Focus & Coverage |
 |---|---|
+| [**RELEASE_NOTES.md**](docs/RELEASE_NOTES.md) | **v1.0.0-RC1 Release Notes**: System capabilities, bug fixes, known boundaries, and run commands. |
+| [**RELEASE_CHECKLIST.md**](docs/RELEASE_CHECKLIST.md) | **Production Release Checklist**: 5-part pre-flight verification audit covering tests, security, and packaging. |
+| [**BUG_FIX_REPORT.md**](docs/BUG_FIX_REPORT.md) | **Integration Defect Report**: Root cause analysis and resolution verification for all 6 identified bugs. |
+| [**ANDROID_BUILD_GUIDE.md**](docs/ANDROID_BUILD_GUIDE.md) | **Android Release Compilation Guide**: Native BLE permissions, Gradle local build, and EAS standalone APK build. |
 | [**FINAL_PROJECT_EVALUATION.md**](docs/FINAL_PROJECT_EVALUATION.md) | **Master Project Evaluation Report**: Complete 16-section capstone evaluation, feature verification matrix, and live benchmark metrics. |
 | [**FINAL_TEST_REPORT.md**](docs/FINAL_TEST_REPORT.md) | **Comprehensive Testing Ledger**: 62 automated test cases with preconditions, steps, expected/actual results, and physical testing protocols. |
 | [**PROJECT_DEMO_SCRIPT.md**](docs/PROJECT_DEMO_SCRIPT.md) | **Academic Defense Scripts**: 5-minute quick demo script and 10-minute deep-dive technical demonstration for examiners. |
