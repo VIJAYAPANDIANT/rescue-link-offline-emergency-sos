@@ -36,6 +36,12 @@ export default function LoginView({ onBackToHome, onSwitchToSignup, onLoginSucce
     setError('');
   };
 
+  const fillRohit = () => {
+    setEmail('vijayt@gmail.com');
+    setPassword('Admin@RescueLink2026');
+    setError('');
+  };
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-br from-[#060b17] via-[#0b1120] to-[#111827]">
       <div className="w-full max-w-md bg-navy-850 border border-slate-800 rounded-2xl shadow-2xl p-8 relative overflow-hidden">
@@ -82,24 +88,34 @@ export default function LoginView({ onBackToHome, onSwitchToSignup, onLoginSucce
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@rescuelink.org"
+              placeholder="vijayt@gmail.com"
               required
               className="w-full px-3.5 py-2.5 rounded-xl bg-navy-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition"
             />
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
                 Password
               </label>
-              <button
-                type="button"
-                onClick={fillDemoAdmin}
-                className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium"
-              >
-                Auto-fill Demo Admin
-              </button>
+              <div className="flex items-center space-x-2 text-[11px]">
+                <button
+                  type="button"
+                  onClick={fillRohit}
+                  className="text-red-400 hover:text-red-300 underline font-semibold"
+                >
+                  Auto-fill Rohit
+                </button>
+                <span className="text-slate-600">•</span>
+                <button
+                  type="button"
+                  onClick={fillDemoAdmin}
+                  className="text-amber-400 hover:text-amber-300 underline font-medium"
+                >
+                  Auto-fill Demo Admin
+                </button>
+              </div>
             </div>
             <input
               type="password"
@@ -143,7 +159,11 @@ export default function LoginView({ onBackToHome, onSwitchToSignup, onLoginSucce
 
         <div className="mt-8 pt-5 border-t border-slate-800 text-center">
           <p className="text-[11px] text-slate-500 leading-relaxed">
-            Role-Based Access Protected. Default seeded credentials:
+            Role-Based Access Protected. Available administrator accounts:
+            <br />
+            <code className="text-slate-300 bg-slate-900 px-2 py-0.5 rounded text-[10px] mt-1 inline-block">
+              vijayt@gmail.com / Admin@RescueLink2026
+            </code>
             <br />
             <code className="text-slate-400 bg-slate-900 px-2 py-0.5 rounded text-[10px] mt-1 inline-block">
               admin@rescuelink.org / Admin@RescueLink2026
