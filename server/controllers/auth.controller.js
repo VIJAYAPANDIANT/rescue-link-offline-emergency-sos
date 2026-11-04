@@ -39,7 +39,7 @@ const validateRegisterInput = ({ name, email, password }) => {
  */
 const register = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
 
     // Validate inputs
     const validationErrors = validateRegisterInput({ name, email, password });
@@ -70,11 +70,18 @@ const register = async (req, res, next) => {
     const saltRounds = 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
+    // Normalize role: only allow valid roles, default to 'user'
+    const allowedRoles = ['admin', 'responder', 'user'];
+    const assignedRole = (role && allowedRoles.includes(String(role).toLowerCase()))
+      ? String(role).toLowerCase()
+      : 'user';
+
     // Save user to JSON store
     const safeUser = await userStore.createUser({
       name,
       email,
       passwordHash,
+      role: assignedRole,
     });
 
     // Generate JWT token

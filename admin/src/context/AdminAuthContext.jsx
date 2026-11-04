@@ -49,6 +49,15 @@ export function AdminAuthProvider({ children }) {
     return res.user;
   };
 
+  const register = async (name, email, password, role = 'admin') => {
+    const res = await adminApi.register(name, email, password, role);
+    if (res.user?.role === 'admin' && res.token) {
+      setToken(res.token);
+      setUser(res.user);
+    }
+    return res;
+  };
+
   const logout = () => {
     adminApi.clearSession();
     setUser(null);
@@ -63,6 +72,7 @@ export function AdminAuthProvider({ children }) {
         isAuthenticated: !!user && !!token,
         loading,
         login,
+        register,
         logout,
       }}
     >

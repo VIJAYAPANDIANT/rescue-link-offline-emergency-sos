@@ -13,7 +13,7 @@ import {
 } from './Icons';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
-export default function Sidebar({ activeTab, setActiveTab, mobileOpen = false, onCloseMobile }) {
+export default function Sidebar({ activeTab, setActiveTab, mobileOpen = false, onCloseMobile, onNavigateHome }) {
   const { user, logout } = useAdminAuth();
 
   const navItems = [
@@ -98,6 +98,17 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen = false, o
             </div>
           </div>
         </div>
+
+        {onNavigateHome && (
+          <button
+            onClick={onNavigateHome}
+            className="w-full mb-2 flex items-center justify-center space-x-2 px-3 py-1.5 rounded-lg border border-slate-700/80 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-semibold transition"
+            aria-label="View RescueLink public landing page"
+          >
+            <span>Public Home Portal</span>
+            <span className="text-red-400">↗</span>
+          </button>
+        )}
 
         <button
           onClick={logout}

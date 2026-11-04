@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useAdminAuth } from '../context/AdminAuthContext';
-import { ShieldIcon, AlertCircleIcon } from '../components/Icons';
+import { ShieldIcon, AlertCircleIcon, ChevronLeftIcon } from '../components/Icons';
 
-export default function LoginView() {
+export default function LoginView({ onBackToHome, onSwitchToSignup }) {
   const { login } = useAdminAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,11 +28,31 @@ export default function LoginView() {
     }
   };
 
+  const fillDemoAdmin = () => {
+    setEmail('admin@rescuelink.org');
+    setPassword('Admin@RescueLink2026');
+    setError('');
+  };
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-br from-[#060b17] via-[#0b1120] to-[#111827]">
       <div className="w-full max-w-md bg-navy-850 border border-slate-800 rounded-2xl shadow-2xl p-8 relative overflow-hidden">
         {/* Glow accent */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 via-amber-500 to-red-600" />
+
+        {/* Back to Home Button */}
+        {onBackToHome && (
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={onBackToHome}
+              className="inline-flex items-center text-xs font-medium text-slate-400 hover:text-white transition px-2.5 py-1.5 rounded-lg hover:bg-slate-800/60"
+            >
+              <ChevronLeftIcon className="w-4 h-4 mr-1 text-slate-400" />
+              Back to Home
+            </button>
+          </div>
+        )}
 
         <div className="text-center mb-8">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-red-600 to-red-500 flex items-center justify-center text-white shadow-xl shadow-red-500/25 mb-4">
@@ -67,9 +87,18 @@ export default function LoginView() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-              Password
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                Password
+              </label>
+              <button
+                type="button"
+                onClick={fillDemoAdmin}
+                className="text-[11px] text-amber-400 hover:text-amber-300 underline font-medium"
+              >
+                Auto-fill Demo Admin
+              </button>
+            </div>
             <input
               type="password"
               value={password}
@@ -89,12 +118,26 @@ export default function LoginView() {
           </button>
         </form>
 
+        {/* Switch to Sign Up */}
+        {onSwitchToSignup && (
+          <div className="mt-6 text-center text-xs text-slate-400">
+            Don't have an administrator account?{' '}
+            <button
+              type="button"
+              onClick={onSwitchToSignup}
+              className="text-red-400 hover:text-red-300 font-semibold underline transition ml-1"
+            >
+              Sign Up here
+            </button>
+          </div>
+        )}
+
         <div className="mt-8 pt-5 border-t border-slate-800 text-center">
           <p className="text-[11px] text-slate-500 leading-relaxed">
-            Role-Based Access Protected. Initial administrator setup:
+            Role-Based Access Protected. Default seeded credentials:
             <br />
             <code className="text-slate-400 bg-slate-900 px-2 py-0.5 rounded text-[10px] mt-1 inline-block">
-              npm run seed:admin
+              admin@rescuelink.org / Admin@RescueLink2026
             </code>
           </p>
         </div>

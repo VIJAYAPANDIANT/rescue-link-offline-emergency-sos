@@ -4,7 +4,9 @@ import adminApi from './api/adminApi';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 
+import HomeView from './views/HomeView';
 import LoginView from './views/LoginView';
+import SignupView from './views/SignupView';
 import OverviewView from './views/OverviewView';
 import IncidentsView from './views/IncidentsView';
 import UsersView from './views/UsersView';
@@ -15,11 +17,20 @@ import AuditLogsView from './views/AuditLogsView';
 
 export default function App() {
   const { isAuthenticated, loading: authLoading } = useAdminAuth();
+  // 'home' is the primary public landing page shown first on website visit
+  const [currentView, setCurrentView] = useState('home'); // 'home' | 'login' | 'signup' | 'dashboard'
   const [activeTab, setActiveTab] = useState('overview');
   const [dashboardData, setDashboardData] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedIncidentForDetail, setSelectedIncidentForDetail] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // When user successfully authenticates, transition directly to the Command Center dashboard
+  useEffect(() => {
+    if (isAuthenticated && (currentView === 'login' || currentView === 'signup')) {
+      setCurrentView('dashboard');
+    }
+  }, [isAuthenticated]);
 
   const fetchDashboard = async () => {
     if (!isAuthenticated) return;
@@ -49,10 +60,51 @@ export default function App() {
     );
   }
 
-  if (!isAuthenticated) {
-    return <LoginView />;
+  // 1. PUBLIC HOME / LANDING PAGE (Primary default view for visitors)
+  if (currentView === 'home') {
+    return (
+      <HomeView
+        isAuthenticated={isAuthenticated}
+        onOpenLogin={() => setCurrentView('login')}
+        onOpenSignup={() => setCurrentView('signup')}
+        onOpenDashboard={() => setCurrentView('dashboard')}
+      />
+    );
   }
 
+  // 2. SIGN IN / LOGIN VIEW
+  if (currentView === 'login') {
+    return (
+      <LoginView
+        onBackToHome={() => setCurrentView('home')}
+        onSwitchToSignup={() => setCurrentView('signup')}
+      />
+    );
+  }
+
+  // 3. REGISTRATION / SIGN UP VIEW
+  if (currentView === 'signup') {
+    return (
+      <SignupView
+        onBackToHome={() => setCurrentView('home')}
+        onSwitchToLogin={() => setCurrentView('login')}
+      />
+    );
+  }
+
+  // 4. If not authenticated and not in any public view, fallback to Home
+  if (!isAuthenticated) {
+    return (
+      <HomeView
+        isAuthenticated={false}
+        onOpenLogin={() => setCurrentView('login')}
+        onOpenSignup={() => setCurrentView('signup')}
+        onOpenDashboard={() => setCurrentView('dashboard')}
+      />
+    );
+  }
+
+  // 5. AUTHENTICATED COMMAND CENTER DASHBOARD
   const handleSelectIncidentFromOverview = (incident) => {
     setSelectedIncidentForDetail(incident);
     setActiveTab('incidents');
@@ -110,6 +162,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
+        onNavigateHome={() => setCurrentView('home')}
       />
 
       {/* Main Content Pane */}

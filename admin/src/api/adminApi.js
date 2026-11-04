@@ -96,6 +96,18 @@ class AdminApiClient {
     return res;
   }
 
+  async register(name, email, password, role = 'admin') {
+    const res = await this.request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password, role }),
+    });
+
+    if (res.user?.role === 'admin' && res.token) {
+      this.setSession(res.token, res.user);
+    }
+    return res;
+  }
+
   async getProfile() {
     return this.request('/api/auth/me');
   }
