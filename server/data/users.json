@@ -15,12 +15,12 @@
   },
   {
     "id": "6c3c6c37-a698-455c-b7a9-5660a478bc32",
-    "name": "Admin Test",
+    "name": "RescueLink Administrator",
     "email": "admin@rescuelink.org",
-    "passwordHash": "$2b$10$5Lkir58ZAs4yqLRZCHnPLOBdT.GDaZ893jHCJSa4raQgh70D.dXkO",
+    "passwordHash": "$2b$10$m9x4uJg.WKYCtkoa5kDeCujGyNQrn..slJ/fsuGGfRyRjLqTaA7M2",
     "role": "admin",
     "status": "active",
     "createdAt": "2026-10-30T17:43:25.367Z",
-    "updatedAt": "2026-10-30T17:43:25.369Z"
+    "updatedAt": "2026-11-04T07:13:07.085Z"
   }
 ]
