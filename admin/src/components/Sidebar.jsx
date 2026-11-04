@@ -13,8 +13,13 @@ import {
 } from './Icons';
 import { useAdminAuth } from '../context/AdminAuthContext';
 
-export default function Sidebar({ activeTab, setActiveTab, mobileOpen = false, onCloseMobile, onNavigateHome }) {
+export default function Sidebar({ activeTab, setActiveTab, mobileOpen = false, onCloseMobile, onNavigateHome, onLogout }) {
   const { user, logout } = useAdminAuth();
+
+  const handleLogout = () => {
+    logout();
+    if (onLogout) onLogout();
+  };
 
   const navItems = [
     { id: 'overview', label: 'Dashboard Overview', icon: ActivityIcon },
@@ -111,7 +116,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen = false, o
         )}
 
         <button
-          onClick={logout}
+          onClick={handleLogout}
           className="w-full flex items-center justify-center space-x-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:bg-red-950/40 hover:text-red-400 hover:border-red-500/40 text-xs font-semibold transition"
           aria-label="Sign out of command session"
         >

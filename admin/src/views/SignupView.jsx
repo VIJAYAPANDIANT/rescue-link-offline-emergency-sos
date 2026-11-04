@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { ShieldIcon, AlertCircleIcon, CheckCircleIcon, ChevronLeftIcon } from '../components/Icons';
 
-export default function SignupView({ onBackToHome, onSwitchToLogin }) {
+export default function SignupView({ onBackToHome, onSwitchToLogin, onSignupSuccess }) {
   const { register } = useAdminAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -37,12 +37,15 @@ export default function SignupView({ onBackToHome, onSwitchToLogin }) {
       const res = await register(name.trim(), email.trim(), password, role);
       if (res.user?.role === 'admin') {
         setSuccessMsg('Administrator account created! Directing to Command Center...');
+        setTimeout(() => {
+          if (onSignupSuccess) onSignupSuccess();
+        }, 500);
       } else {
         setSuccessMsg(`Account created successfully for ${res.user?.name || name} (${role})! You can now log in.`);
+        setLoading(false);
       }
     } catch (err) {
       setError(err.message || 'Registration failed. Please verify your details or use a different email.');
-    } finally {
       setLoading(false);
     }
   };

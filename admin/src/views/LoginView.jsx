@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { ShieldIcon, AlertCircleIcon, ChevronLeftIcon } from '../components/Icons';
 
-export default function LoginView({ onBackToHome, onSwitchToSignup }) {
+export default function LoginView({ onBackToHome, onSwitchToSignup, onLoginSuccess }) {
   const { login } = useAdminAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,10 +20,12 @@ export default function LoginView({ onBackToHome, onSwitchToSignup }) {
 
     setLoading(true);
     try {
-      await login(email, password);
+      await login(email.trim(), password);
+      if (onLoginSuccess) {
+        onLoginSuccess();
+      }
     } catch (err) {
       setError(err.message || 'Authentication failed. Please verify your administrator credentials.');
-    } finally {
       setLoading(false);
     }
   };
@@ -112,9 +114,16 @@ export default function LoginView({ onBackToHome, onSwitchToSignup }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-2 py-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-red-600/30 transition-all disabled:opacity-50"
+            className="w-full mt-2 py-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-red-600/30 transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
           >
-            {loading ? 'Authenticating...' : 'Sign In to Command Center'}
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                <span>Entering Command Center...</span>
+              </>
+            ) : (
+              <span>Sign In to Command Center</span>
+            )}
           </button>
         </form>
 

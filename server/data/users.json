@@ -22,5 +22,15 @@
     "status": "active",
     "createdAt": "2026-10-30T17:43:25.367Z",
     "updatedAt": "2026-11-04T07:13:07.085Z"
+  },
+  {
+    "id": "638a9e58-e159-4a56-858a-1d18c481e019",
+    "name": "Rohit",
+    "email": "vijayt@gmail.com",
+    "passwordHash": "$2b$10$RiYzz3tcahRpjySqP.Yx/eV6H3aWe7yv2QZKLu7NK6sh1/v7Wfz6S",
+    "role": "responder",
+    "status": "active",
+    "createdAt": "2026-11-04T07:16:52.823Z",
+    "updatedAt": "2026-11-04T07:16:52.823Z"
   }
 ]

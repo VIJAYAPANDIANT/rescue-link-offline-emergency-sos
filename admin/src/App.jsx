@@ -25,12 +25,12 @@ export default function App() {
   const [selectedIncidentForDetail, setSelectedIncidentForDetail] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // When user successfully authenticates, transition directly to the Command Center dashboard
+  // When user is authenticated and is on login or signup view, transition directly to dashboard
   useEffect(() => {
     if (isAuthenticated && (currentView === 'login' || currentView === 'signup')) {
       setCurrentView('dashboard');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentView]);
 
   const fetchDashboard = async () => {
     if (!isAuthenticated) return;
@@ -65,8 +65,14 @@ export default function App() {
     return (
       <HomeView
         isAuthenticated={isAuthenticated}
-        onOpenLogin={() => setCurrentView('login')}
-        onOpenSignup={() => setCurrentView('signup')}
+        onOpenLogin={() => {
+          if (isAuthenticated) setCurrentView('dashboard');
+          else setCurrentView('login');
+        }}
+        onOpenSignup={() => {
+          if (isAuthenticated) setCurrentView('dashboard');
+          else setCurrentView('signup');
+        }}
         onOpenDashboard={() => setCurrentView('dashboard')}
       />
     );
@@ -74,20 +80,44 @@ export default function App() {
 
   // 2. SIGN IN / LOGIN VIEW
   if (currentView === 'login') {
+    if (isAuthenticated) {
+      return (
+        <HomeView
+          isAuthenticated={true}
+          onOpenLogin={() => setCurrentView('dashboard')}
+          onOpenSignup={() => setCurrentView('dashboard')}
+          onOpenDashboard={() => setCurrentView('dashboard')}
+        />
+      );
+    }
+
     return (
       <LoginView
         onBackToHome={() => setCurrentView('home')}
         onSwitchToSignup={() => setCurrentView('signup')}
+        onLoginSuccess={() => setCurrentView('dashboard')}
       />
     );
   }
 
   // 3. REGISTRATION / SIGN UP VIEW
   if (currentView === 'signup') {
+    if (isAuthenticated) {
+      return (
+        <HomeView
+          isAuthenticated={true}
+          onOpenLogin={() => setCurrentView('dashboard')}
+          onOpenSignup={() => setCurrentView('dashboard')}
+          onOpenDashboard={() => setCurrentView('dashboard')}
+        />
+      );
+    }
+
     return (
       <SignupView
         onBackToHome={() => setCurrentView('home')}
         onSwitchToLogin={() => setCurrentView('login')}
+        onSignupSuccess={() => setCurrentView('dashboard')}
       />
     );
   }
@@ -163,6 +193,7 @@ export default function App() {
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         onNavigateHome={() => setCurrentView('home')}
+        onLogout={() => setCurrentView('home')}
       />
 
       {/* Main Content Pane */}
