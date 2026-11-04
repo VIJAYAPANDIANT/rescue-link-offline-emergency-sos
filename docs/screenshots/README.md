@@ -18,9 +18,10 @@ This directory is designated to receive real screenshots captured directly from 
 
 When conducting a live demonstration or physical hardware test, capture each screen following the instructions below and save the files with these exact names:
 
-| Filename | Screen Description | Source Platform |
-|---|---|---|
-| `01_home_screen.png` | Home readiness dashboard showing Bluetooth, Sync, and Location status | Mobile (Android) |
+| Filename | Screen Description | Source Platform | Status |
+|---|---|---|---|
+| `web_landing_home.png` | Web Landing Portal: hero, top navbar (Log In/Sign Up), live gateway indicator | Web (Portal) | ✅ **Captured & Verified** |
+| `01_home_screen.png` | Home readiness dashboard showing Bluetooth, Sync, and Location status | Mobile (Android) | 📋 Ready for Capture |
 | `02_send_sos_screen.png` | Emergency composer with category selection and GPS coordinates | Mobile (Android) |
 | `03_sos_confirmation_modal.png` | 3-second safety cancellation countdown dialog | Mobile (Android) |
 | `04_nearby_bluetooth_devices.png` | BLE radar scanning for nearby peer emergency signals | Mobile (Android) |

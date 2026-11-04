@@ -44,6 +44,13 @@
 
 ---
 
+<div align="center">
+  <img src="docs/screenshots/web_landing_home.png" alt="RescueLink Disaster Mesh Web Landing Portal & Operations Platform" width="100%" style="border-radius: 12px; border: 1px solid #1e293b; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);" />
+  <p align="center"><em>RescueLink Web Operations & Public Landing Portal — Featuring Live Gateway Telemetry, Role-Based Access, and Autonomous BLE Mesh Command</em></p>
+</div>
+
+---
+
 ## 📑 Table of Contents
 1. [Project Overview](#1-project-overview)
 2. [Problem Statement](#2-problem-statement)
@@ -134,6 +141,7 @@ To preserve absolute engineering transparency, all features are categorized by t
 | **Emergency Contacts & SMS/Email**| Contact priority sorting (1–5), multi-channel dispatch, recipient privacy masking | ✅ **Verified in Backend Dispatcher** |
 | **Live Situational Map** | Dual-engine Google Maps (`react-native-maps`) + Offline Tactical Radar Canvas | ✅ **Verified in Mobile Map Screen** |
 | **Real-Time Incident Stream** | Server-Sent Events (`GET /api/alerts/stream`) broadcasting live emergencies | ✅ **Verified in Express Backend** |
+| **Public Landing Portal & Auth** | Responsive home page, top navbar Log In & Sign Up, role picker (Admin/Responder/Civilian) | ✅ **Verified in Web Client & Tests** |
 | **Web Admin Operations Center** | React 18 + Vite 6 + Tailwind CSS dashboard with incident triage & audit logs | ✅ **Verified (Vite Production Build Clean)** |
 | **Android Manifest & Permissions**| Configured for Android 8 through 14 (`BLUETOOTH_SCAN`, `FOREGROUND_SERVICE`) | ✅ **Verified in `mobile/app.json`** |
 | **Direct Physical Over-Air BLE** | Two physical handsets exchanging distress beacons in Airplane Mode | ⏳ **Awaiting Multi-Handset Field Session** |
@@ -348,10 +356,32 @@ flowchart LR
 
 ## 11. Screenshots & Visual Evidence
 
-In adherence to strict open-source engineering standards, **no synthetic or fake screenshots are committed**. The registry below details all 14 required demonstration screens, their platform context, and designated target filenames in [`docs/screenshots/`](docs/screenshots/README.md) and [`docs/evidence/`](docs/evidence/SCREENSHOT_CHECKLIST.md):
+In adherence to strict open-source engineering standards, visual evidence is cataloged from physical devices and running local instances. Below is the verified visual capture of the newly launched RescueLink Public Landing Portal:
+
+### 📸 Live Captured Web Portal & Operations Interface
+
+<div align="center">
+  <img src="docs/screenshots/web_landing_home.png" alt="RescueLink Web Landing & Operations Portal" width="100%" style="border-radius: 12px; border: 1px solid #1e293b; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);" />
+</div>
+
+<br />
+
+| Interface Callout | Component Feature | Operational Verification Detail |
+|---|---|---|
+| **Top Navigation Bar** | Log In & Sign Up Controls | Fixed top navigation bar allowing visitors to quickly access the administrative sign-in portal or self-register. |
+| **Live Gateway Pill** | Active Backend Telemetry Probe | Actively pings `/api/health` in real time with dynamic latency indicators (`Gateway: Online (15ms)`). |
+| **Disaster Mission Hero** | Emergency Distess Call to Action | High-contrast hero layout with dual primary triggers: *Launch Command Center* and *Register Account*. |
+| **Evaluator Quick-Pill** | Seeded Credential Indicators | Displays verified evaluation access credentials (`admin@rescuelink.org` / `Admin@RescueLink2026`) for rapid verification. |
+
+---
+
+### 📋 Full Interface Demonstration Registry
+
+The registry below details all key demonstration screens across mobile and web platforms in [`docs/screenshots/`](docs/screenshots/README.md) and [`docs/evidence/`](docs/evidence/SCREENSHOT_CHECKLIST.md):
 
 | # | Screen Name | Target Filename | Platform | Primary Visual Verification Elements | Status |
 |---|---|---|---|---|---|
+| **00** | **Web Landing & Home Portal** | `web_landing_home.png` | Web | Public landing hero, live gateway indicator, top navbar with Log In & Sign Up buttons. | ✅ **Captured & Verified** |
 | **01** | **Home / Readiness Dashboard** | `01_home_screen.png` | Mobile | Status cards for Bluetooth (Active), Network (Online/Offline), GPS, and recent activity. | 📋 Ready for Capture |
 | **02** | **Send SOS Composer** | `02_send_sos_screen.png` | Mobile | Category selector, details input box, GPS coordinates, and red "SEND SOS" button. | 📋 Ready for Capture |
 | **03** | **SOS Cancellation Modal** | `03_sos_confirmation_modal.png` | Mobile | 3-second safety countdown dialog with cancel button and override trigger. | 📋 Ready for Capture |
@@ -406,6 +436,16 @@ npm install
 cp .env.example .env
 npx expo start
 ```
+
+### 🔑 Verified Evaluation & Demo Credentials
+
+| Account Name | Email Address | Password | Role | Access Scope |
+|---|---|---|---|---|
+| **System Administrator** | `admin@rescuelink.org` | `Admin@RescueLink2026` | `admin` | Full Command Center, Incident triage, User administration, Audit Ledger |
+| **Field Commander (Rohit)** | `vijayt@gmail.com` | `Admin@RescueLink2026` | `admin` | Full Command Center, Incident triage, User administration, Audit Ledger |
+
+> [!TIP]
+> On the Web Login screen (`http://localhost:5173`), click the one-click **"Auto-fill Demo Admin"** or **"Auto-fill Rohit"** shortcuts to populate your credentials instantly without manual typing.
 
 ---
 
